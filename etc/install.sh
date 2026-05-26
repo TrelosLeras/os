@@ -2,6 +2,7 @@
 # ============================================================
 # WhiteoutProjectOS -- Universal One-Click Installer
 # Run on a fresh Ubuntu/Debian machine as root.
+# Use "curl -sSL https://raw.githubusercontent.com/YourUsername/YourRepo/main/install.sh | sudo bash" on target machine.
 # ============================================================
 set -e
 
