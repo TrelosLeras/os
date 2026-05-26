@@ -79,15 +79,15 @@ cd "$TMP_DIR"
 echo "[INFO] Downloading setup files..."
 
 # --- 5. Download Files from GitHub ---
-curl -sSL "${REPO_BASE}/rootfs-overlay/usr/local/bin/wp-os-provision.sh" -o wp-os-provision.sh
-curl -sSL "${REPO_BASE}/rootfs-overlay/usr/local/bin/wp-os-install-bot.sh" -o wp-os-install-bot.sh
-curl -sSL "${REPO_BASE}/rootfs-overlay/usr/local/bin/wp-os-bot-start.sh" -o wp-os-bot-start.sh
-curl -sSL "${REPO_BASE}/rootfs-overlay/usr/local/bin/wp-os-bot-manager.sh" -o wp-os-bot-manager.sh
-curl -sSL "${REPO_BASE}/rootfs-overlay/usr/local/bin/wp-os-update.sh" -o wp-os-update.sh
+curl -sSL "${REPO_BASE}/wp-os-x86/rootfs-overlay/usr/local/bin/wp-os-provision.sh" -o wp-os-provision.sh
+curl -sSL "${REPO_BASE}/wp-os-x86/rootfs-overlay/usr/local/bin/wp-os-install-bot.sh" -o wp-os-install-bot.sh
+curl -sSL "${REPO_BASE}/wp-os-x86/rootfs-overlay/usr/local/bin/wp-os-bot-start.sh" -o wp-os-bot-start.sh
+curl -sSL "${REPO_BASE}/wp-os-x86/rootfs-overlay/usr/local/bin/wp-os-bot-manager.sh" -o wp-os-bot-manager.sh
+curl -sSL "${REPO_BASE}/wp-os-x86/rootfs-overlay/usr/local/bin/wp-os-update.sh" -o wp-os-update.sh
 
 # Download Webserver app.py
 mkdir -p "${WEBSERVER_DIR}"
-curl -sSL "${REPO_BASE}/webserver/app.py" -o "${WEBSERVER_DIR}/app.py"
+curl -sSL "${REPO_BASE}/wp-os-x86/webserver/app.py" -o "${WEBSERVER_DIR}/app.py"
 
 # --- 6. Move scripts to correct locations ---
 chmod +x wp-os-*.sh
