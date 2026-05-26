@@ -48,21 +48,26 @@ OS_HOSTNAME=${INPUT_HOST:-wp-os-server}
 REPO_BASE="https://raw.githubusercontent.com/TrelosLeras/os/main/wp-os-x86"
 GITHUB_REPO="TrelosLeras/os"
 
-# ⚠️ Make sure these point to the actual original developer repos!
-BOT_MAIN_PY="main.py"
-BOT_INSTALL_PY="install.py"
-BOT_JS_REPO="ikketim/wos-js"
+# -- Bot repositories ----------------------------------------
+# WOS Python bot
+BOT_MAIN_PY="https://raw.githubusercontent.com/whiteout-project/bot/main/main.py"
+BOT_INSTALL_PY="https://raw.githubusercontent.com/whiteout-project/install/main/install.py"
+
+# WOS JavaScript bot
+BOT_JS_REPO="https://github.com/whiteout-project/Whiteout-Survival-Discord-Bot"
 BOT_JS_BRANCH="main"
-BOT_KINGSHOT_REPO="ikketim/kingshot"
+
+# Kingshot bot
+BOT_KINGSHOT_REPO="https://github.com/kingshot-project/Kingshot-Discord-Bot"
 BOT_KINGSHOT_BRANCH="main"
-BOT_KINGSHOT_INSTALL_PY="install.py"
-BOT_VOICECHAT_REPO="ikketim/voicechat"
+BOT_KINGSHOT_INSTALL_PY="https://raw.githubusercontent.com/kingshot-project/Kingshot-Discord-Bot/main/install/install.py"
+
+# WOS VoiceChat Counter bot
+BOT_VOICECHAT_REPO="https://github.com/ikketimnl/wos-voicechat-counter"
 BOT_VOICECHAT_BRANCH="main"
 
 DEFAULT_BOT="wos-py"
-DEFAULT_BOT_LABEL="Main Alliance Bot"
-BACKGROUND_IMAGE_URL="https://example.com/wallpaper.png"
-DESKTOP="xfce"
+DEFAULT_BOT_LABEL="Wos Bot"
 BOTS_DIR="/home/${OS_USERNAME}/bots"
 WEBSERVER_DIR="/opt/wp-os-webserver"
 WEBSERVER_PORT="8080"
