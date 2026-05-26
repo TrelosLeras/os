@@ -18,15 +18,17 @@ echo -e "\033[0m"
 echo "WARNING: This script will deeply modify this machine."
 echo "It is highly recommended to run this on a FRESH installation of Ubuntu/Debian."
 echo ""
-read -p "Press ENTER to continue or Ctrl+C to cancel..."
+
+# The </dev/tty addition forces bash to listen to the keyboard even when piped!
+read -p "Press ENTER to continue or Ctrl+C to cancel..." </dev/tty
 
 # --- Gather User Inputs ---
-read -p "Enter a username for the OS admin [default: wp-os-user]: " INPUT_USER
+read -p "Enter a username for the OS admin [default: wp-os-user]: " INPUT_USER </dev/tty
 OS_USERNAME=${INPUT_USER:-wp-os-user}
 
-read -s -p "Enter a password for the OS admin: " OS_PASSWORD
+read -s -p "Enter a password for the OS admin: " OS_PASSWORD </dev/tty
 echo ""
-read -s -p "Confirm password: " OS_PASSWORD_CONFIRM
+read -s -p "Confirm password: " OS_PASSWORD_CONFIRM </dev/tty
 echo ""
 
 if [ "$OS_PASSWORD" != "$OS_PASSWORD_CONFIRM" ]; then
@@ -39,27 +41,22 @@ if [ -z "$OS_PASSWORD" ]; then
   echo "[WARN] No password provided. Defaulting to 'password123'"
 fi
 
-read -p "Enter a hostname for this machine [default: wp-os-server]: " INPUT_HOST
+read -p "Enter a hostname for this machine [default: wp-os-server]: " INPUT_HOST </dev/tty
 OS_HOSTNAME=${INPUT_HOST:-wp-os-server}
 
 # --- Internal Variables ---
 REPO_BASE="https://raw.githubusercontent.com/TrelosLeras/os/main/wp-os-x86"
 GITHUB_REPO="TrelosLeras/os"
 
-BOT_MAIN_PY="https://raw.githubusercontent.com/whiteout-project/bot/main/main.py"
-BOT_INSTALL_PY="https://raw.githubusercontent.com/whiteout-project/install/main/install.py"
-
-# WOS JavaScript bot
-BOT_JS_REPO="https://github.com/whiteout-project/Whiteout-Survival-Discord-Bot"
+# ⚠️ Make sure these point to the actual original developer repos!
+BOT_MAIN_PY="main.py"
+BOT_INSTALL_PY="install.py"
+BOT_JS_REPO="ikketim/wos-js"
 BOT_JS_BRANCH="main"
-
-# Kingshot bot
-BOT_KINGSHOT_REPO="https://github.com/kingshot-project/Kingshot-Discord-Bot"
+BOT_KINGSHOT_REPO="ikketim/kingshot"
 BOT_KINGSHOT_BRANCH="main"
-BOT_KINGSHOT_INSTALL_PY="https://raw.githubusercontent.com/kingshot-project/Kingshot-Discord-Bot/main/install/install.py"
-
-# WOS VoiceChat Counter bot
-BOT_VOICECHAT_REPO="https://github.com/ikketimnl/wos-voicechat-counter"
+BOT_KINGSHOT_INSTALL_PY="install.py"
+BOT_VOICECHAT_REPO="ikketim/voicechat"
 BOT_VOICECHAT_BRANCH="main"
 
 DEFAULT_BOT="wos-py"
@@ -77,6 +74,7 @@ apt-get install -y -qq wget curl sudo
 
 # Remove Snap version of curl to prevent sandbox errors
 if command -v snap &> /dev/null && snap list curl &> /dev/null; then
+  echo "[INFO] Removing sandboxed Snap version of curl..."
   snap remove curl
 fi
 
@@ -85,6 +83,7 @@ TMP_DIR=$(mktemp -d)
 cd "$TMP_DIR"
 echo "[INFO] Downloading setup files..."
 
+# Using wget guarantees we bypass any remaining curl sandbox quirks
 wget -qO wp-os-provision.sh "${REPO_BASE}/rootfs-overlay/usr/local/bin/wp-os-provision.sh"
 wget -qO wp-os-install-bot.sh "${REPO_BASE}/rootfs-overlay/usr/local/bin/wp-os-install-bot.sh"
 wget -qO wp-os-bot-start.sh "${REPO_BASE}/rootfs-overlay/usr/local/bin/wp-os-bot-start.sh"
