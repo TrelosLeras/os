@@ -70,17 +70,6 @@ echo "[3/9] Updating system..."
 apt-get update -qq
 apt-get upgrade -y -qq --no-install-recommends
 
-# --- 3.5 Pre-Flight Dependency Check ---
-echo "[INFO] Verifying native dependencies..."
-apt-get update -qq
-apt-get install -y -qq curl wget
-
-# If the strict snap version of curl is installed, remove it to prevent sandbox errors
-if command -v snap &> /dev/null && snap list curl &> /dev/null; then
-  echo "[INFO] Removing sandboxed Snap version of curl..."
-  snap remove curl
-fi
-
 # -- 4. Core packages
 echo "[4/9] Installing core packages..."
 apt-get install -y -qq --no-install-recommends \
