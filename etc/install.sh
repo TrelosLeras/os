@@ -20,30 +20,42 @@ echo "WARNING: This script will deeply modify this machine."
 echo "It is highly recommended to run this on a FRESH installation of Ubuntu/Debian."
 echo ""
 
-# The </dev/tty addition forces bash to listen to the keyboard even when piped!
-read -p "Press ENTER to continue or Ctrl+C to cancel..." </dev/tty
+# --- Smart Detection: Automated vs Interactive ---
+# Check if Go injected a username ($1) and password ($2) behind the scenes
+if [ -n "$1" ] && [ -n "$2" ]; then
+  echo "[INFO] Automated Windows setup detected. Bypassing interactive prompts."
+  OS_USERNAME="$1"
+  OS_PASSWORD="$2"
+  # If Go passed a 3rd argument for hostname, use it. Otherwise, use the default.
+  OS_HOSTNAME="${3:-wp-os-server}" 
+else
+  echo "[INFO] Interactive setup detected."
 
-# --- Gather User Inputs ---
-read -p "Enter a username for the OS admin [default: wp-os-user]: " INPUT_USER </dev/tty
-OS_USERNAME=${INPUT_USER:-wp-os-user}
+  # The </dev/tty addition forces bash to listen to the keyboard even when piped!
+  read -p "Press ENTER to continue or Ctrl+C to cancel..." </dev/tty
 
-read -s -p "Enter a password for the OS admin: " OS_PASSWORD </dev/tty
-echo ""
-read -s -p "Confirm password: " OS_PASSWORD_CONFIRM </dev/tty
-echo ""
+  # --- Gather User Inputs ---
+  read -p "Enter a username for the OS admin [default: wp-os-user]: " INPUT_USER </dev/tty
+  OS_USERNAME=${INPUT_USER:-wp-os-user}
 
-if [ "$OS_PASSWORD" != "$OS_PASSWORD_CONFIRM" ]; then
-  echo -e "\033[0;31m[ERROR] Passwords do not match. Exiting.\033[0m"
-  exit 1
+  read -s -p "Enter a password for the OS admin: " OS_PASSWORD </dev/tty
+  echo ""
+  read -s -p "Confirm password: " OS_PASSWORD_CONFIRM </dev/tty
+  echo ""
+
+  if [ "$OS_PASSWORD" != "$OS_PASSWORD_CONFIRM" ]; then
+    echo -e "\033[0;31m[ERROR] Passwords do not match. Exiting.\033[0m"
+    exit 1
+  fi
+
+  if [ -z "$OS_PASSWORD" ]; then
+    OS_PASSWORD="password123"
+    echo "[WARN] No password provided. Defaulting to 'password123'"
+  fi
+
+  read -p "Enter a hostname for this machine [default: wp-os-server]: " INPUT_HOST </dev/tty
+  OS_HOSTNAME=${INPUT_HOST:-wp-os-server}
 fi
-
-if [ -z "$OS_PASSWORD" ]; then
-  OS_PASSWORD="password123"
-  echo "[WARN] No password provided. Defaulting to 'password123'"
-fi
-
-read -p "Enter a hostname for this machine [default: wp-os-server]: " INPUT_HOST </dev/tty
-OS_HOSTNAME=${INPUT_HOST:-wp-os-server}
 
 # --- Internal Variables ---
 REPO_BASE="https://raw.githubusercontent.com/TrelosLeras/os/main/wp-os-x86"
