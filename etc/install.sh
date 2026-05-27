@@ -26,7 +26,7 @@ if [ -n "$1" ] && [ -n "$2" ]; then
   echo "[INFO] Automated Windows setup detected. Bypassing interactive prompts."
   OS_USERNAME="$1"
   OS_PASSWORD="$2"
-  # If Go passed a 3rd argument for hostname, use it. Otherwise, use the default.
+  # Go passes the Hostname as the 3rd argument. If missing, it defaults to wp-os-server.
   OS_HOSTNAME="${3:-wp-os-server}" 
 else
   echo "[INFO] Interactive setup detected."
