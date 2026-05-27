@@ -2,7 +2,7 @@
 # ============================================================
 # WhiteoutProjectOS -- Universal One-Click Installer
 # Run on a fresh Ubuntu/Debian machine as root.
-# Use "curl -sSL https://raw.githubusercontent.com/WhiteoutProject/os/main/etc/install.sh | sudo bash" on target machine.
+# Use "curl -sSL https://raw.githubusercontent.com/whiteout-project/os/main/etc/install.sh | sudo bash" on target machine.
 # ============================================================
 set -e
 
