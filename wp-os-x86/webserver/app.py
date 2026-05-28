@@ -1800,10 +1800,6 @@ function startRealtimeStream() {
       const modeInput = document.getElementById(`mode-${s.slot_id}`);
       const modeBox = document.getElementById(`box-menu-mode-${s.slot_id}`);
       
-      // 2. Instantly reset the Dropdown after --repair finishes
-      const modeInput = document.getElementById(`mode-${s.slot_id}`);
-      const modeBox = document.getElementById(`box-menu-mode-${s.slot_id}`);
-      
       if (modeInput && modeBox && modeInput.value === '--repair' && s.startup_mode !== '--repair') {
         const modeMap = {
           '--autoupdate': 'Standard (Auto-Update)',
