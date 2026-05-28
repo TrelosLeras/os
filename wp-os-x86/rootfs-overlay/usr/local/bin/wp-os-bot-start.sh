@@ -52,7 +52,7 @@ case "$BOT_TYPE" in
   wos-js)
     [ -d "${APP_DIR}/src" ] || { echo "ERROR: wos-js not installed" >&2; exit 1; }
     cd "${APP_DIR}/src"
-    exec env TOKEN="$TOKEN" npm start $BOT_FLAGS
+    exec env TOKEN="$TOKEN" node starter.js $BOT_FLAGS
     ;;
   kingshot)
     cd "$APP_DIR"
