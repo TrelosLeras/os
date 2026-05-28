@@ -182,7 +182,8 @@ def list_slots():
         tok = read_token(slot_id)
 		
 		# --- NEW: Read the saved startup mode from disk ---
-        startup_mode = "--autoupdate"
+        # If it's a JS bot, the default fallback is now --type=wos
+        startup_mode = "--type=wos" if meta.get("type") == "wos-js" else "--autoupdate"
         flags_f = d / ".startup_flags"
         if flags_f.exists():
             try:
@@ -1799,13 +1800,20 @@ function startRealtimeStream() {
       const modeInput = document.getElementById(`mode-${s.slot_id}`);
       const modeBox = document.getElementById(`box-menu-mode-${s.slot_id}`);
       
+      // 2. Instantly reset the Dropdown after --repair finishes
+      const modeInput = document.getElementById(`mode-${s.slot_id}`);
+      const modeBox = document.getElementById(`box-menu-mode-${s.slot_id}`);
+      
       if (modeInput && modeBox && modeInput.value === '--repair' && s.startup_mode !== '--repair') {
         const modeMap = {
           '--autoupdate': 'Standard (Auto-Update)',
           '--no-update': 'Skip Update (--no-update)',
-          '--repair': 'Repair (--repair)'
+          '--repair': 'Repair (--repair)',
+          '--type=wos': 'WOS Mode (Default)',
+          '--type=ks': "King's State Mode (--type=ks)",
+          '--type=both': 'Both Modes (--type=both)'
         };
-        const newMode = s.startup_mode || '--autoupdate';
+        const newMode = s.startup_mode || (s.type === 'wos-js' ? '--type=wos' : '--autoupdate');
         modeInput.value = newMode;
         modeBox.textContent = modeMap[newMode] || 'Standard (Auto-Update)';
       }
@@ -1826,9 +1834,12 @@ function slotCard(s){
   const modeMap = {
     '--autoupdate': 'Standard (Auto-Update)',
     '--no-update': 'Skip Update (--no-update)',
-    '--repair': 'Repair (--repair)'
+    '--repair': 'Repair (--repair)',
+    '--type=wos': 'WOS Mode (Default)',
+    '--type=ks': "King's State Mode (--type=ks)",
+    '--type=both': 'Both Modes (--type=both)'
   };
-  const currentMode = s.startup_mode || '--autoupdate';
+  const currentMode = s.startup_mode || (s.type === 'wos-js' ? '--type=wos' : '--autoupdate');
   const currentModeLabel = modeMap[currentMode] || 'Standard (Auto-Update)';
 
   return `<div class="wp-card" id="slot-${s.slot_id}">
@@ -1844,18 +1855,24 @@ function slotCard(s){
     <button class="wp-btn wp-btn-primary" onclick="installSlot('${s.slot_id}','${s.type}')">&#8681; Install</button>
   </div>`:''}
   
-  ${(s.type === 'wos-py' || s.type === 'kingshot') ? `
+  ${(s.type === 'wos-py' || s.type === 'kingshot' || s.type === 'wos-js') ? `
   <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; background: rgba(0,0,0,.2); border: 1px solid #1e2a3a; padding: 8px 14px; border-radius: 6px;">
     <span style="font-size: 11px; letter-spacing: 1px; color: #6c7a96; text-transform: uppercase;">
-      <span style="color:#00c8ff; margin-right: 4px;">⚙</span> Startup Mode
+      <span style="color:#00c8ff; margin-right: 4px;">⚙</span> ${s.type === 'wos-js' ? 'Bot Core Execution Type' : 'Startup Mode'}
     </span>
     
-    <div class="wp-sel-wrap" style="min-width: 200px; max-width: 280px;">
+    <div class="wp-sel-wrap" style="min-width: 250px; max-width: 320px;">
       <div class="wp-sel-box" id="box-menu-mode-${s.slot_id}" onclick="toggleCustomSel('menu-mode-${s.slot_id}', this.id)" style="padding: 4px 28px 4px 10px; background-position: right 8px center; background-color: rgba(0,0,0,.4);">${currentModeLabel}</div>
       <div class="wp-sel-menu" id="menu-mode-${s.slot_id}">
-        <div class="wp-sel-item" onclick="pickCustomSel('menu-mode-${s.slot_id}', 'mode-${s.slot_id}', '--autoupdate', 'Standard (Auto-Update)')">Standard (Auto-Update)</div>
-        <div class="wp-sel-item" onclick="pickCustomSel('menu-mode-${s.slot_id}', 'mode-${s.slot_id}', '--no-update', 'Skip Update (--no-update)')">Skip Update (--no-update)</div>
-        <div class="wp-sel-item" onclick="pickCustomSel('menu-mode-${s.slot_id}', 'mode-${s.slot_id}', '--repair', 'Repair Files (--repair)')">Repair Files (run once) (--repair)</div>
+        ${s.type === 'wos-js' ? `
+          <div class="wp-sel-item" onclick="pickCustomSel('menu-mode-${s.slot_id}', 'mode-${s.slot_id}', '--type=wos', 'WOS Mode (Default)')">WOS Mode (Default)</div>
+          <div class="wp-sel-item" onclick="pickCustomSel('menu-mode-${s.slot_id}', 'mode-${s.slot_id}', '--type=ks', 'King\'s State Mode (--type=ks)')">King's State Mode (--type=ks)</div>
+          <div class="wp-sel-item" onclick="pickCustomSel('menu-mode-${s.slot_id}', 'mode-${s.slot_id}', '--type=both', 'Both Modes (--type=both)')">Both Modes (--type=both)</div>
+        ` : `
+          <div class="wp-sel-item" onclick="pickCustomSel('menu-mode-${s.slot_id}', 'mode-${s.slot_id}', '--autoupdate', 'Standard (Auto-Update)')">Standard (Auto-Update)</div>
+          <div class="wp-sel-item" onclick="pickCustomSel('menu-mode-${s.slot_id}', 'mode-${s.slot_id}', '--no-update', 'Skip Update (--no-update)')">Skip Update (--no-update)</div>
+          <div class="wp-sel-item" onclick="pickCustomSel('menu-mode-${s.slot_id}', 'mode-${s.slot_id}', '--repair', 'Repair Files (--repair)')">Repair Files (run once) (--repair)</div>
+        `}
       </div>
       <input type="hidden" id="mode-${s.slot_id}" value="${currentMode}">
     </div>
