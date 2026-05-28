@@ -1806,7 +1806,7 @@ function startRealtimeStream() {
           '--no-update': 'Skip Update (--no-update)',
           '--repair': 'Repair (--repair)',
           '--type=wos': 'WOS Mode (Default)',
-          '--type=ks': "King's State Mode (--type=ks)",
+          '--type=ks': "KS Mode (--type=ks)",
           '--type=both': 'Both Modes (--type=both)'
         };
         const newMode = s.startup_mode || (s.type === 'wos-js' ? '--type=wos' : '--autoupdate');
@@ -1832,7 +1832,7 @@ function slotCard(s){
     '--no-update': 'Skip Update (--no-update)',
     '--repair': 'Repair (--repair)',
     '--type=wos': 'WOS Mode (Default)',
-    '--type=ks': "King's State Mode (--type=ks)",
+    '--type=ks': "KS Mode (--type=ks)",
     '--type=both': 'Both Modes (--type=both)'
   };
   const currentMode = s.startup_mode || (s.type === 'wos-js' ? '--type=wos' : '--autoupdate');
@@ -1862,7 +1862,7 @@ function slotCard(s){
       <div class="wp-sel-menu" id="menu-mode-${s.slot_id}">
         ${s.type === 'wos-js' ? `
           <div class="wp-sel-item" onclick="pickCustomSel('menu-mode-${s.slot_id}', 'mode-${s.slot_id}', '--type=wos', 'WOS Mode (Default)')">WOS Mode (Default)</div>
-          <div class="wp-sel-item" onclick="pickCustomSel('menu-mode-${s.slot_id}', 'mode-${s.slot_id}', '--type=ks', 'King\'s State Mode (--type=ks)')">King's State Mode (--type=ks)</div>
+          <div class="wp-sel-item" onclick="pickCustomSel('menu-mode-${s.slot_id}', 'mode-${s.slot_id}', '--type=ks', 'King\'s State Mode (--type=ks)')">KS Mode (--type=ks)</div>
           <div class="wp-sel-item" onclick="pickCustomSel('menu-mode-${s.slot_id}', 'mode-${s.slot_id}', '--type=both', 'Both Modes (--type=both)')">Both Modes (--type=both)</div>
         ` : `
           <div class="wp-sel-item" onclick="pickCustomSel('menu-mode-${s.slot_id}', 'mode-${s.slot_id}', '--autoupdate', 'Standard (Auto-Update)')">Standard (Auto-Update)</div>
