@@ -33,20 +33,20 @@ case "$BOT_TYPE" in
     cd "$APP_DIR"
     printf '%s\n' "$TOKEN" > "${APP_DIR}/bot_token.txt"
     chmod 600 "${APP_DIR}/bot_token.txt"
-    exec "${APP_DIR}/venv/bin/python3" "${APP_DIR}/main.py" --autoupdate
+    exec "${APP_DIR}/venv/bin/python3" "${APP_DIR}/main.py" $BOT_FLAGS
     ;;
 
   wos-js)
     [ -d "${APP_DIR}/src" ] || { echo "ERROR: wos-js not installed — run Install from the web panel" >&2; exit 1; }
     cd "${APP_DIR}/src"
-    exec env TOKEN="$TOKEN" npm start
+    exec env TOKEN="$TOKEN" npm start $BOT_FLAGS
     ;;
 
   kingshot)
     cd "$APP_DIR"
     printf '%s\n' "$TOKEN" > "${APP_DIR}/bot_token.txt"
     chmod 600 "${APP_DIR}/bot_token.txt"
-    exec "${APP_DIR}/venv/bin/python3" "${APP_DIR}/main.py" --autoupdate
+    exec "${APP_DIR}/venv/bin/python3" "${APP_DIR}/main.py" $BOT_FLAGS
     ;;
 
   voicechat)
