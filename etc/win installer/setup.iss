@@ -16,7 +16,6 @@ Compression=lzma
 SolidCompression=yes
 
 [Files]
-; CRITICAL FIX: DestName changes the internal name so tasklist never finds the installer by mistake!
 Source: "WhiteoutProjectOS.exe"; DestDir: "{app}"; DestName: "WhiteoutCore.exe"; Flags: ignoreversion
 Source: "icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 
@@ -24,8 +23,8 @@ Source: "icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [UninstallDelete]
-; Tells the uninstaller to clean up our manually created shortcuts
 Type: files; Name: "{autoprograms}\WhiteoutProjectOS\WhiteoutProjectOS.lnk"
+Type: files; Name: "{autoprograms}\WhiteoutProjectOS\Uninstall WhiteoutProjectOS.lnk"
 Type: dirifempty; Name: "{autoprograms}\WhiteoutProjectOS"
 Type: files; Name: "{autodesktop}\WhiteoutProjectOS.lnk"
 
@@ -44,6 +43,7 @@ const
 var
   CredentialsPage: TInputQueryWizardPage;
   LogBox: TNewMemo; 
+  AbortReason: String;
 
 // --- HELPER: Windows Message Pump ---
 type
@@ -72,8 +72,7 @@ begin
   end;
 end;
 
-// --- NEW HELPER: Smart Delay (60 FPS UI Waiter) ---
-// Waits for the specified time while constantly pumping UI messages so animations don't freeze
+// --- HELPER: Smart Delay ---
 procedure Delay(Milliseconds: DWORD);
 var
   StartTick: DWORD;
@@ -82,18 +81,8 @@ begin
   while (GetTickCount - StartTick < Milliseconds) do
   begin
     AppProcessMessage;
-    Sleep(10); // Tiny micro-sleep to prevent 100% CPU core lockup
+    Sleep(10); 
   end;
-end;
-
-// --- HELPER: Native File Copy ---
-function CloneLogFile(FileName: String): String;
-var
-  TempFile: String;
-begin
-  TempFile := ExpandConstant('{tmp}\read.log');
-  FileCopy(FileName, TempFile, False); 
-  Result := TempFile;
 end;
 
 // --- HELPER: Silent Process Monitor ---
@@ -107,8 +96,22 @@ begin
     Processes := WMIService.ConnectServer('localhost', 'root\CIMV2').ExecQuery('SELECT * FROM Win32_Process WHERE Name="' + FileName + '"');
     Result := Processes.Count > 0;
   except
-    // Failsafe
   end;
+end;
+
+// --- HELPER: The Ghost Copier ---
+function CloneLogFile(FileName: String): String;
+var
+  TempFile: String;
+  WshShell: Variant;
+begin
+  TempFile := ExpandConstant('{tmp}\read.log');
+  try
+    WshShell := CreateOleObject('WScript.Shell');
+    WshShell.Run('cmd.exe /c copy /Y "' + FileName + '" "' + TempFile + '"', 0, True);
+  except
+  end;
+  Result := TempFile;
 end;
 
 // --- HELPER: Read Last Line ---
@@ -126,22 +129,31 @@ begin
   else Result := 'Initializing...';
 end;
 
-// --- HELPER: Abort Detector ---
+// --- HELPER: Smart Abort Detector ---
 function CheckForAbort(FileName: String): Boolean;
 var
   Lines: TArrayOfString;
   TempLog: String;
-  I: Integer;
+  I, Limit: Integer;
 begin
   Result := False;
+  AbortReason := 'Installation was cancelled by the user. Your existing Ubuntu environment was not modified.'; 
+  
   TempLog := CloneLogFile(FileName);
   if LoadStringsFromFile(TempLog, Lines) then
   begin
-    for I := GetArrayLength(Lines) - 1 downto 0 do
+    Limit := GetArrayLength(Lines) - 3;
+    if Limit < 0 then Limit := 0;
+    
+    for I := GetArrayLength(Lines) - 1 downto Limit do
     begin
       if Pos('[ABORT]', Lines[I]) > 0 then
       begin
         Result := True;
+        if Pos('restart is required', Lines[I]) > 0 then
+          AbortReason := 'Windows Subsystem for Linux requires a system restart to finish applying core Windows features.'
+        else if Pos('system error', Lines[I]) > 0 then
+          AbortReason := 'Installation failed due to a system or network error. Please check your connection and try again.';
         Exit;
       end;
     end;
@@ -188,10 +200,15 @@ begin
 
   StartMenuPath := ExpandConstant('{autoprograms}\WhiteoutProjectOS');
   ForceDirectories(StartMenuPath); 
+  
   Shortcut := WshShell.CreateShortcut(StartMenuPath + '\WhiteoutProjectOS.lnk');
   Shortcut.TargetPath := TargetPath;
   Shortcut.Arguments := '-launch';
   Shortcut.IconLocation := IconPath;
+  Shortcut.Save;
+
+  Shortcut := WshShell.CreateShortcut(StartMenuPath + '\Uninstall WhiteoutProjectOS.lnk');
+  Shortcut.TargetPath := ExpandConstant('{uninstallexe}');
   Shortcut.Save;
 
   if WizardIsTaskSelected('desktopicon') then
@@ -205,7 +222,7 @@ begin
   end;
 end;
 
-// --- BUILD THE CUSTOM UI PAGE ---
+// --- 1. BUILD THE CUSTOM UI PAGE ---
 procedure InitializeWizard;
 begin
   CredentialsPage := CreateInputQueryPage(wpWelcome,
@@ -271,28 +288,22 @@ begin
   end;
 end;
 
-// --- THE REAL INSTALLATION EXECUTION PHASE ---
+// --- 5. THE REAL INSTALLATION EXECUTION PHASE ---
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode, Tick: Integer;
-  Parameters, LogFile: String;
+  Parameters, LogFile, TempLog: String;
   CurrentLogLine, LastLogLine: String;
 begin
   if CurStep = ssPostInstall then
   begin
     LogFile := 'C:\Windows\Temp\wos_install.log';
+    TempLog := ExpandConstant('{tmp}\read.log');
     
-    // --- 1. THE BRUTAL ZOMBIE WIPE ---
-    // Kill processes
+    // --- 1. THE BULLETPROOF WIPE (MFT RENAME TRICK) ---
     Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM WhiteoutCore.exe /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    
-    // Attempt 1 & 2: Native Delete & CMD Delete
-    DeleteFile(LogFile);
-    DeleteFile(ExpandConstant('{tmp}\read.log'));
-    Exec(ExpandConstant('{sys}\cmd.exe'), '/c del /F /Q "' + LogFile + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    
-    // Attempt 3: The Nuclear Option. Truncates the file to exactly 0 bytes even if it is locked!
-    Exec(ExpandConstant('{sys}\cmd.exe'), '/c type NUL > "' + LogFile + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\cmd.exe'), '/c move /Y "' + LogFile + '" "C:\Windows\Temp\ghost_' + IntToStr(GetTickCount()) + '.bak"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\cmd.exe'), '/c move /Y "' + TempLog + '" "C:\Windows\Temp\ghost_read_' + IntToStr(GetTickCount()) + '.bak"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     // ---------------------------------
 
     WizardForm.CancelButton.Enabled := False;
@@ -300,7 +311,7 @@ begin
     CreateConfigFile;
     
     LogBox.Visible := True;
-    LogBox.Lines.Clear; // Guarantee a completely blank UI slate
+    LogBox.Lines.Clear;
     
     WizardForm.StatusLabel.Caption := 'System Installation...';
     
@@ -311,7 +322,6 @@ begin
     WizardForm.Refresh; 
 
     LastLogLine := ''; 
-    // Now that the file is guaranteed empty, write the starting line
     SaveStringToFile(LogFile, '[System] Installer initialized...' + #13#10, False);
 
     // --- STAGE 1 & 2 ---
@@ -344,20 +354,24 @@ begin
       begin
         WizardForm.ProgressGauge.Position := WizardForm.ProgressGauge.Position + 1;
       end;
-
       Delay(1000); 
     end;
 
-    // --- ABORT CHECK ---
+    // --- ABORT CHECK 1 ---
     if CheckForAbort(LogFile) then
     begin
       WizardForm.StatusLabel.Caption := 'Installation Aborted.';
       WizardForm.ProgressGauge.Position := 100;
-      
       LogBox.Lines.Add(GetLastLine(LogFile));
       LogBox.SelStart := Length(LogBox.Text);
       
-      MsgBox('Installation was cancelled by the user. Your existing Ubuntu environment was not modified.', mbError, MB_OK);
+      if Pos('restart', AbortReason) > 0 then
+      begin
+        if MsgBox(AbortReason + #13#10#13#10 + 'Would you like to restart your computer now?', mbConfirmation, MB_YESNO) = idYes then
+          Exec(ExpandConstant('{sys}\shutdown.exe'), '/r /t 0', '', SW_HIDE, ewNoWait, ResultCode);
+      end else begin
+        MsgBox(AbortReason, mbError, MB_OK);
+      end;
       WizardForm.CancelButton.Enabled := True; 
       Exit; 
     end;
@@ -381,16 +395,33 @@ begin
       end;
       
       WizardForm.ProgressGauge.Position := CalculateSmartProgress(WizardForm.ProgressGauge.Position);
-      
       Delay(1000); 
     end;
     
+    // --- ABORT CHECK 2 ---
+    if CheckForAbort(LogFile) then
+    begin
+      WizardForm.StatusLabel.Caption := 'Installation Aborted.';
+      WizardForm.ProgressGauge.Position := 100;
+      LogBox.Lines.Add(GetLastLine(LogFile));
+      LogBox.SelStart := Length(LogBox.Text);
+      
+      if Pos('restart', AbortReason) > 0 then
+      begin
+        if MsgBox(AbortReason + #13#10#13#10 + 'Would you like to restart your computer now?', mbConfirmation, MB_YESNO) = idYes then
+          Exec(ExpandConstant('{sys}\shutdown.exe'), '/r /t 0', '', SW_HIDE, ewNoWait, ResultCode);
+      end else begin
+        MsgBox(AbortReason, mbError, MB_OK);
+      end;
+      WizardForm.CancelButton.Enabled := True; 
+      Exit; 
+    end;
+
     // --- WRAP UP ---
     WizardForm.ProgressGauge.Position := 100;
     WizardForm.StatusLabel.Caption := 'Finalizing shortcuts...';
     
     CreateShortcuts; 
-    
     WizardForm.StatusLabel.Caption := 'Installation Complete.';
   end;
 end;
