@@ -137,7 +137,7 @@ var
   I, Limit: Integer;
 begin
   Result := False;
-  AbortReason := 'Installation was cancelled by the user. Your existing Ubuntu environment was not modified.'; 
+  AbortReason := 'Installation was cancelled. Your existing environment was not modified.'; 
   
   TempLog := CloneLogFile(FileName);
   if LoadStringsFromFile(TempLog, Lines) then
@@ -350,7 +350,7 @@ begin
       end;
       
       Tick := Tick + 1;
-      if (Tick mod 2 = 0) and (WizardForm.ProgressGauge.Position < 59) and (Pos('Installing Ubuntu', LogBox.Text) > 0) then
+      if (Tick mod 2 = 0) and (WizardForm.ProgressGauge.Position < 59) and (Pos('Installing WhiteoutProjectOS', LogBox.Text) > 0) then
       begin
         WizardForm.ProgressGauge.Position := WizardForm.ProgressGauge.Position + 1;
       end;
