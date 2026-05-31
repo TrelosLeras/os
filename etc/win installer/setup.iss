@@ -324,11 +324,13 @@ begin
     LastLogLine := ''; 
     SaveStringToFile(LogFile, '[System] Installer initialized...' + #13#10, False);
 
-    // --- STAGE 1 & 2 ---
-    WizardForm.StatusLabel.Caption := 'Enabling Windows features...';
+    // --- STAGE 1 ---
+    WizardForm.StatusLabel.Caption := 'Enabling Windows Subsystem for Linux (WSL)...';
     Exec(ExpandConstant('{app}\WhiteoutCore.exe'), '-stage1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     WizardForm.ProgressGauge.Position := 15;
     
+    // --- STAGE 2 ---
+    WizardForm.StatusLabel.Caption := 'Enabling Virtual Machine Platform (VMP)...';
     Exec(ExpandConstant('{app}\WhiteoutCore.exe'), '-stage2', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     WizardForm.ProgressGauge.Position := 30;
 

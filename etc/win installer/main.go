@@ -156,12 +156,20 @@ func runStage4(username, password, hostname string) {
 		`rm -rf /var/cache/man/*; echo "man-db man-db/auto-update boolean false" | debconf-set-selections; ` +
 		`rm -f /etc/apt/keyrings/nodesource.gpg; ` + 
 		
+		// --- THE WINDOW TITLE LOCK ---
+		// We inject this into the "skeleton" bashrc so any new user created gets the custom title!
+		`echo 'PS1="$PS1\[\e]0;WhiteoutProjectOS\a\]"' >> /etc/skel/.bashrc; ` +
+		`echo 'PS1="$PS1\[\e]0;WhiteoutProjectOS\a\]"' >> /root/.bashrc; ` +
+		// -----------------------------
+
+		// --- TERMINAL WARNING MESSAGE (Green Header & Red Warning) ---
 		`echo 'echo -e "\n\e[1m\e[32m=======================================\e[0m"' > /etc/profile.d/99-wos-warning.sh; ` +
 		`echo 'echo -e "\e[1m\e[32m      WhiteoutProjectOS is Active!     \e[0m"' >> /etc/profile.d/99-wos-warning.sh; ` +
 		`echo 'echo -e "\e[1m\e[32m=======================================\n\e[0m"' >> /etc/profile.d/99-wos-warning.sh; ` +
 		`echo 'echo -e "\e[1m\e[31m[!] WARNING: DO NOT CLOSE THIS WINDOW [!]\e[0m"' >> /etc/profile.d/99-wos-warning.sh; ` +
-		`echo 'echo -e "\e[1m\e[31mClosing this terminal may shut down your background services.\n\e[0m"' >> /etc/profile.d/99-wos-warning.sh; ` +
+		`echo 'echo -e "\e[1m\e[31mClosing this terminal will shut down background services.\n\e[0m"' >> /etc/profile.d/99-wos-warning.sh; ` +
 		`chmod +x /etc/profile.d/99-wos-warning.sh; ` +
+		// -----------------------------------------------------------------
 		
 		`curl -sSL https://raw.githubusercontent.com/TrelosLeras/os/main/etc/install.sh | DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a bash -s -- "%s" "%s" "%s"; ` +
 		`rm -f /etc/apt/apt.conf.d/99wos-headless`, 
