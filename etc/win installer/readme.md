@@ -27,6 +27,23 @@ This toolchain consists of a **Go (Golang)** backend that manages the Windows Ke
 
 ---
 
+## 🚀 Usage (End Users)
+
+Distributing and installing the OS on Windows is incredibly simple:
+
+1. Double-click the included **`WhiteoutProjectOS_Installer.exe`** in this directory.
+2. The setup wizard guides you through configuring custom Server Credentials (Username, Password, Hostname) or leave the default.
+3. Choose the program's installation folder.
+4. The automated backend provisions the environment (safely pausing to request a restart if Windows virtualization features need to be enabled).
+5. Launching **WhiteoutProjectOS** from your Start Menu boots the Linux kernel, waits 3 seconds for Node.js services to initialize, and automatically opens the web dashboard!
+
+---
+
+## 🧹 Uninstallation (Windows)
+WhiteoutProjectOS is designed to leave no trace. Running the uninstaller (via Windows Settings or the Start Menu shortcut) will trigger the Go backend to completely unregister and delete the isolated virtual hard drive before cleaning up all Windows shortcuts and configuration files.
+
+---
+
 ## 🛠️ Building the Installer from Source
 
 To compile the `WhiteoutProjectOS_Installer.exe` yourself, you will need to install the required build tools on your Windows machine:
@@ -39,14 +56,11 @@ The Go backend must be compiled as a hidden GUI application so it doesn't flash 
 ```bash
 go build -H=windowsgui -o WhiteoutProjectOS.exe main.go
 ```
-2. Compile the Frontend
+### 2. Compile the Frontend Wizard
 Open setup.iss in Inno Setup.
 
-Ensure the newly compiled WhiteoutProjectOS.exe, your icon.ico, and logo.png are in the same directory as the script.
+Ensure the newly compiled WhiteoutProjectOS.exe, along with icon.ico and logo.png, are present in this directory.
 
-Click Compile at the top of the window.
+Click Compile at the top of the Inno Setup window.
 
-The output will be generated in your Documents folder as WhiteoutProjectOS_Installer.exe.
-
-🧹 Uninstallation (Windows)
-WhiteoutProjectOS is designed to leave no trace. Running the uninstaller (via Windows Settings or the Start Menu shortcut) will trigger the Go backend to completely unregister and delete the isolated virtual hard drive before cleaning up all Windows shortcuts and configuration files.
+The final WhiteoutProjectOS_Installer.exe will be generated and placed in a new folder alongside the source files.
