@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 WhiteoutProjectOS -- Multi-Bot Web Control Panel
-Serves on PORT env var (default 8080). Run as root.
+WServes on PORT env var (default 8080). Run as root.
 """
 import hashlib
 import json
@@ -72,9 +72,9 @@ API_GROUPS = {"wos-py": "wos", "wos-js": "wos", "kingshot": "kingshot", "voicech
 
 # Maps the bot "type" to its specific database folder inside BOTS_DIR / slot_id
 DB_SUBFOLDERS = {
-    "wos-py": "app/db",
-    "wos-js": "app/src/src/database",
-    "kingshot": "app/db"
+    "wos-py": ["app/db"],
+    "wos-js": ["app/src/src/database", "app/src/plugins"],
+    "kingshot": ["app/db"]
 }
 
 AUDIO_SUBFOLDERS = {
@@ -533,23 +533,48 @@ def api_slot_backup_download(slot_id):
     if not slot_dir.exists():
         return jsonify({"error": "Slot not found"}), 404
 
-    # 1. Read the type to figure out the path
     meta = _read_json(slot_dir / ".meta.json", {})
     bot_type = meta.get("type")
     
     if bot_type not in DB_SUBFOLDERS:
         return jsonify({"error": f"Backups are not supported for type: {bot_type}"}), 400
         
-    db_path = slot_dir / DB_SUBFOLDERS[bot_type]
-    if not db_path.exists():
-        return jsonify({"error": "Database folder does not exist yet"}), 404
-
-    # 2. Compress the folder to a zip file in /tmp
-    zip_filename = f"/tmp/{slot_id}_backup"
-    shutil.make_archive(zip_filename, 'zip', db_path)
+    paths = DB_SUBFOLDERS[bot_type]
+    if isinstance(paths, str):
+        paths = [paths]
+        
+    zip_filename = f"/tmp/{slot_id}_backup.zip"
+    found_files = False
+    ALLOWED_EXTS = ('.sqlite', '.sqlite3', '.db')
     
-    # 3. Send it to the user
-    return send_file(f"{zip_filename}.zip", as_attachment=True)
+    # 1. SMART STOP: Memorize state and shut down to prevent SQLite corruption
+    was_running = svc_status(slot_id) == "active"
+    if was_running:
+        svc_run("stop", slot_id)
+    
+    try:
+        # 2. Safely zip the database files
+        with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for rel_path in paths:
+                target_dir = slot_dir / rel_path
+                if target_dir.exists() and target_dir.is_dir():
+                    for root, dirs, files in os.walk(target_dir):
+                        for file in files:
+                            if not file.endswith(ALLOWED_EXTS):
+                                continue
+                            file_path = Path(root) / file
+                            arcname = file_path.relative_to(slot_dir)
+                            zipf.write(file_path, arcname)
+                            found_files = True
+    finally:
+        # 3. SAFETY NET: Guarantee the bot turns back on, even if zipping crashes
+        if was_running:
+            svc_run("start", slot_id)
+                        
+    if not found_files:
+        return jsonify({"error": "No database files (.sqlite, .json, .db) found to backup."}), 404
+        
+    return send_file(zip_filename, as_attachment=True)
 
 @app.route("/api/slots/<slot_id>/backup/upload", methods=["POST"])
 def api_slot_backup_upload(slot_id):
@@ -570,38 +595,41 @@ def api_slot_backup_upload(slot_id):
     if not uploaded_file.filename.endswith('.zip'):
         return jsonify({"error": "Must be a .zip file"}), 400
 
-    db_path = slot_dir / DB_SUBFOLDERS[bot_type]
+    paths = DB_SUBFOLDERS[bot_type]
+    if isinstance(paths, str):
+        paths = [paths]
+
+    # 1. SMART STOP
+    was_running = svc_status(slot_id) == "active"
+    if was_running:
+        svc_run("stop", slot_id)
 
     try:
-        # 1. Stop the bot so we don't corrupt the database
-        svc_run("stop", slot_id)
-        
-        # 2. Nuke the old database folder
-        if db_path.exists():
-            shutil.rmtree(db_path)
-        db_path.mkdir(parents=True, exist_ok=True)
-        
-        # 3. Extract the new backup
+        # 2. Extract over existing files (leaves source code untouched!)
         with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
-            zip_ref.extractall(db_path)
+            zip_ref.extractall(slot_dir)
             
-        # 4. Correct permissions so the bot can read the new files
+        # 3. Correct permissions
         uid, gid = _os_user_ids()
-        for root, dirs, files in os.walk(db_path):
-            os.chown(root, uid, gid)
-            for d in dirs:
-                os.chown(os.path.join(root, d), uid, gid)
-            for f in files:
-                os.chown(os.path.join(root, f), uid, gid)
+        for rel_path in paths:
+            target_dir = slot_dir / rel_path
+            if target_dir.exists():
+                for root, dirs, files in os.walk(target_dir):
+                    os.chown(root, uid, gid)
+                    for d in dirs:
+                        os.chown(os.path.join(root, d), uid, gid)
+                    for f in files:
+                        os.chown(os.path.join(root, f), uid, gid)
                 
-        # 5. Restart the bot
-        svc_run("start", slot_id)
-        
         return jsonify({"ok": True, "message": "Backup restored successfully!"})
         
     except Exception as e:
-        svc_run("start", slot_id) # Try to turn it back on if it crashes
         return jsonify({"error": f"Restore failed: {str(e)}"}), 500
+        
+    finally:
+        # 4. SAFETY NET: Guarantee the bot turns back on
+        if was_running:
+            svc_run("start", slot_id)
 
 @app.route("/api/slots/<slot_id>/audio/download", methods=["GET"])
 def api_slot_audio_download(slot_id):
@@ -1188,6 +1216,51 @@ def api_system_update_log():
         return jsonify({"lines": [], "running": running})
 
 # ---------------------------------------------------------------------------
+# Theme API
+# ---------------------------------------------------------------------------
+THEME_FILE = Path(WSERVER) / ".theme.json"
+
+@app.route("/api/theme", methods=["GET"])
+def api_theme_get():
+    default_theme = {
+        "theme": "default",
+        "customColors": {
+            "--bg-main": "#172643",
+            "--bg-surface": "rgba(40, 61, 102, 1.0)",
+            "--border": "#1e2a3a",
+            "--accent": "#00c8ff",
+            "--btn-primary": "#00c8ff",
+            "--title-bot": "#00c8ff",
+            "--text-main": "#cdd6f4",
+            "--text-header": "#c2e9ff",
+            "--text-muted": "#6c7a96",
+            "--nav-bg": "#172643",
+            "--nav-text": "#6c7a96",
+            "--nav-active": "#00c8ff",
+            "--log-bg": "rgba(5, 8, 16, 0.5)",
+            "--log-text": "#b6e8ff",
+            "--log-info": "#00e676",
+            "--log-warn": "#ffea00",
+            "--log-error": "#ff5a7a",
+            "--res-bg": "rgba(0, 0, 0, 0.25)",
+            "--res-text": "#6c7a96",
+            "--res-val": "#cdd6f4",
+            "--res-bar": "#00c8ff",
+            "--bot-py": "#00c8ff",
+            "--bot-js": "#ffea00",
+            "--bot-ks": "#ff6b35",
+            "--bot-vc": "#c882ff"
+        }
+    }
+    return jsonify(_read_json(THEME_FILE, default_theme))
+
+@app.route("/api/theme", methods=["POST"])
+def api_theme_set():
+    data = request.json or {}
+    _write_json(THEME_FILE, data)
+    return jsonify({"ok": True})
+
+# ---------------------------------------------------------------------------
 # SPA
 # ---------------------------------------------------------------------------
 SINGLE_PAGE_HTML = r"""<!DOCTYPE html>
@@ -1358,7 +1431,82 @@ body{font-family:'Exo 2',sans-serif;font-weight:300;background:#172643;color:#cd
 .wp-nav-badge { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: #ff1744; box-shadow: 0 0 8px #ff1744; opacity: 0; transition: opacity 0.3s ease; pointer-events: none; }
 .wp-nav-badge.active { opacity: 1; }
 
+/* --- THE ULTIMATE THEME OVERRIDES --- */
+:root {
+  --bg-main: #172643; --bg-surface: #283d66; --bg-surface-alpha: 100%;
+  --border: #1e2a3a; --accent: #00c8ff; --btn-primary: #00c8ff; --title-bot: #00c8ff;
+  --text-main: #cdd6f4; --text-header: #c2e9ff; --text-muted: #6c7a96;
+  --nav-bg: #172643; --nav-text: #6c7a96; --nav-active: #00c8ff;
+  --log-bg: #050810; --log-bg-alpha: 50%; --log-text: #b6e8ff;
+  --log-info: #00e676; --log-warn: #ffea00; --log-error: #ff5a7a;
+  --res-bg: #000000; --res-bg-alpha: 25%; --res-text: #6c7a96; --res-val: #cdd6f4; --res-bar: #00c8ff;
+}
+
+/* Core Interface */
+body { background-color: var(--bg-main) !important; color: var(--text-main) !important; }
+.wp-card, .wp-sel-menu { background-color: var(--bg-surface) !important; border-color: var(--border) !important; }
+.wp-sys-tile { background-color: var(--res-bg) !important; border-color: var(--border) !important; }
+.wp-log-box { background-color: var(--log-bg) !important; border-color: var(--border) !important; }
+.wp-inp, .wp-sel-box { background-color: rgba(0,0,0,0.35) !important; border-color: var(--border) !important; }
+.wp-table td, .wp-section-lbl, .wp-vc-section { border-color: var(--border) !important; }
+
+/* Typography */
+.wp-card-title { color: var(--text-header) !important; }
+.wp-form-label, .wp-table th, .wp-vc-label { color: var(--text-muted) !important; }
+.wp-sys-tile .lbl { color: var(--res-text) !important; }
+.wp-sys-tile .val { color: var(--res-val) !important; }
+#bots-list .wp-card > div:first-child > span:first-child { color: var(--title-bot) !important; }
+
+/* Navigation Bar */
+.wp-hdr, .wp-nav { background-color: var(--nav-bg) !important; color: var(--nav-text) !important; border-color: var(--border) !important; }
+.wp-nav button { color: var(--nav-text) !important; }
+.wp-nav button.active { background-color: color-mix(in srgb, var(--nav-active) 15%, transparent) !important; color: var(--nav-active) !important; border-color: var(--border) !important; }
+
+/* Accents & Buttons */
+.wp-logo-text span, .wp-ic { color: var(--accent) !important; }
+.wp-card::before { background: linear-gradient(90deg, var(--accent), transparent) !important; }
+.wp-hdr::after { background: linear-gradient(90deg, transparent, var(--accent), transparent) !important; }
+.wp-inp:focus, .wp-sel-box:hover, .wp-bot-opt.sel, .wp-sel-menu { border-color: var(--accent) !important; }
+.wp-bot-opt.sel .wp-bot-radio { background-color: var(--accent) !important; border-color: var(--accent) !important; box-shadow: 0 0 6px var(--accent) !important; }
+.wp-sel-item:hover { background-color: color-mix(in srgb, var(--accent) 15%, transparent) !important; color: var(--accent) !important; border-left-color: var(--accent) !important; }
+.wp-btn-primary { background-color: var(--btn-primary) !important; color: #000 !important; }
+.wp-btn-ghost:hover { border-color: var(--btn-primary) !important; color: var(--btn-primary) !important; }
+.wp-progress-fill { background-color: var(--res-bar) !important; }
+
+/* Hardcoded Base Buttons */
+.wp-btn-success { background-color: #00e676 !important; color: #000 !important; }
+.wp-btn-warn { background-color: #ff6b35 !important; color: #000 !important; }
+.wp-btn-danger { background-color: #ff1744 !important; color: #000 !important; }
+
+/* Console Logs Engine */
+.wp-log-box { color: var(--log-text) !important; }
+.log-info { color: var(--log-info) !important; } 
+.log-warn { color: var(--log-warn) !important; } 
+.log-error { color: var(--log-error) !important; text-shadow: 0 0 8px color-mix(in srgb, var(--log-error) 40%, transparent) !important; }
+.log-date { color: var(--text-muted) !important; }
+
+/* Hardcoded Bot Badges */
+.wp-tag-py { color: #00c8ff !important; background-color: color-mix(in srgb, #00c8ff 14%, transparent) !important; }
+.wp-tag-js { color: #ffea00 !important; background-color: color-mix(in srgb, #ffea00 14%, transparent) !important; }
+.wp-tag-ks { color: #ff6b35 !important; background-color: color-mix(in srgb, #ff6b35 14%, transparent) !important; }
+.wp-tag-vc { color: #c882ff !important; background-color: color-mix(in srgb, #c882ff 14%, transparent) !important; }
+
+/* Custom Grid & Professional Coloris Picker */
+.wp-grid-2col { display: grid; gap: 16px; margin-bottom: 16px; align-items: stretch; }
+@media (min-width: 769px) { .wp-grid-2col { grid-template-columns: 1fr 1fr; } }
+
+/* Makes the input a sleek text box */
+.wp-color-picker { width: 100%; height: 38px; border: 1px solid var(--border) !important; border-radius: 6px; background-color: rgba(0,0,0,0.35) !important; color: #cdd6f4; font-family: 'Share Tech Mono', monospace; font-size: 12px; padding: 0 12px !important; cursor: pointer; transition: 0.2s; outline: none; }
+.wp-color-picker:focus { border-color: var(--accent) !important; }
+
+/* Positions the Coloris swatch perfectly inside our input box */
+.clr-field { width: 100%; }
+.clr-field input { padding-left: 48px !important; }
+.clr-field button { left: 8px; }
+
 </style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/mdbassit/Coloris@latest/dist/coloris.min.css"/>
+<script src="https://cdn.jsdelivr.net/gh/mdbassit/Coloris@latest/dist/coloris.min.js"></script>
 </head>
 <body>
 
@@ -1377,6 +1525,7 @@ body{font-family:'Exo 2',sans-serif;font-weight:300;background:#172643;color:#cd
   <button class="active" onclick="showTab('bots',this)">⚡ Bots <span id="badge-bots" class="wp-nav-badge"></span></button>
   <button onclick="showTab('tokens',this)">🔑 Tokens</button>
   <button onclick="showTab('system',this)">🖥 System</button>
+  <button onclick="showTab('theme',this)">🎨 Theme</button>
 </nav>
 
 <div class="wp-main">
@@ -1470,7 +1619,7 @@ body{font-family:'Exo 2',sans-serif;font-weight:300;background:#172643;color:#cd
 <div id="system" class="wp-page">
   <div class="wp-sys-grid" id="sys-info"></div>
 
-  <div class="wp-card">
+<div class="wp-card">
     <div class="wp-card-title" style="justify-content:space-between">
       <span><span class="wp-ic">📡</span> Service Status</span>
       <button class="wp-btn wp-btn-warn" style="font-size:10px;padding:5px 12px" onclick="restartAll()">↺ Restart All</button>
@@ -1480,7 +1629,7 @@ body{font-family:'Exo 2',sans-serif;font-weight:300;background:#172643;color:#cd
       <tbody id="sys-services"></tbody>
     </table>
   </div>
-
+  
   <div class="wp-card">
     <div class="wp-card-title"><span class="wp-ic">📋</span> Setup Log</div>
     <div class="wp-log-box" id="sys-log" style="height:200px"></div>
@@ -1488,7 +1637,6 @@ body{font-family:'Exo 2',sans-serif;font-weight:300;background:#172643;color:#cd
 
   <div class="wp-card">
     <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px;">
-      
       <div style="display: flex; flex-direction: column; gap: 6px;">
         <div class="wp-card-title" style="margin-bottom: 0;">
           <span><span class="wp-ic">⬆</span> OS Update</span>
@@ -1497,13 +1645,76 @@ body{font-family:'Exo 2',sans-serif;font-weight:300;background:#172643;color:#cd
           Current Version: <strong id="panel-version-display" style="color:#00e676; font-family:'Share Tech Mono', monospace; font-size:14px; letter-spacing: 1px;">Fetching...</strong>
         </div>
       </div>
-
       <button class="wp-btn wp-btn-primary" id="update-btn" onclick="runUpdate()" style="font-size:10px; padding:6px 14px; white-space: nowrap;">Check &amp; Apply Updates</button>
-      
     </div>
-
     <div id="update-msg"></div>
     <div class="wp-log-box" id="update-log" style="height:200px;display:none;margin-top:10px"></div>
+  </div>
+</div>
+
+<!-- THEME -->
+<div id="theme" class="wp-page">
+  <div class="wp-card">
+    <div class="wp-card-title"><span class="wp-ic">🎨</span> Interface Customization</div>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:20px;">Design your own perfect OS environment.</p>
+
+    <div class="wp-grid-2col">
+      <div style="background: rgba(0,0,0,0.15); padding: 16px; border-radius: 6px; border: 1px solid var(--border);">
+        <div class="wp-section-lbl" style="margin-top:0;">Core Interface</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div class="wp-form-group"><span class="wp-form-label">Background</span><input type="text" id="theme-bg" class="wp-color-picker" data-coloris></div>
+          <div class="wp-form-group"><span class="wp-form-label">Surface (Cards)</span><input type="text" id="theme-surface" class="wp-color-picker" data-coloris></div>
+          <div class="wp-form-group"><span class="wp-form-label">Main Accent</span><input type="text" id="theme-accent" class="wp-color-picker" data-coloris></div>
+          <div class="wp-form-group"><span class="wp-form-label">Primary Button</span><input type="text" id="theme-btn-primary" class="wp-color-picker" data-coloris></div>
+          <div class="wp-form-group"><span class="wp-form-label">Borders & Lines</span><input type="text" id="theme-border" class="wp-color-picker" data-coloris></div>
+          <div class="wp-form-group"><span class="wp-form-label">Bot Slot Titles</span><input type="text" id="theme-title-bot" class="wp-color-picker" data-coloris></div>
+        </div>
+      </div>
+
+      <div style="background: rgba(0,0,0,0.15); padding: 16px; border-radius: 6px; border: 1px solid var(--border);">
+        <div class="wp-section-lbl" style="margin-top:0;">Logs Console</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div class="wp-form-group"><span class="wp-form-label">Log Box BG</span><input type="text" id="theme-log-bg" class="wp-color-picker" data-coloris></div>
+          <div class="wp-form-group"><span class="wp-form-label">Standard Text</span><input type="text" id="theme-log-text" class="wp-color-picker" data-coloris></div>
+          <div class="wp-form-group"><span class="wp-form-label">Status: Info</span><input type="text" id="theme-log-info" class="wp-color-picker" data-coloris></div>
+          <div class="wp-form-group"><span class="wp-form-label">Status: Warning</span><input type="text" id="theme-log-warn" class="wp-color-picker" data-coloris></div>
+          <div class="wp-form-group"><span class="wp-form-label">Status: Error</span><input type="text" id="theme-log-error" class="wp-color-picker" data-coloris></div>
+        </div>
+      </div>
+
+      <div style="background: rgba(0,0,0,0.15); padding: 16px; border-radius: 6px; border: 1px solid var(--border);">
+        <div class="wp-section-lbl" style="margin-top:0;">Typography</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div class="wp-form-group"><span class="wp-form-label">Primary Text</span><input type="text" id="theme-text" class="wp-color-picker" data-coloris></div>
+          <div class="wp-form-group"><span class="wp-form-label">Headers & Titles</span><input type="text" id="theme-header" class="wp-color-picker" data-coloris></div>
+          <div class="wp-form-group"><span class="wp-form-label">Muted / Labels</span><input type="text" id="theme-muted" class="wp-color-picker" data-coloris></div>
+        </div>
+      </div>
+
+      <div style="background: rgba(0,0,0,0.15); padding: 16px; border-radius: 6px; border: 1px solid var(--border);">
+        <div class="wp-section-lbl" style="margin-top:0;">Navigation Bar</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div class="wp-form-group"><span class="wp-form-label">Nav Background</span><input type="text" id="theme-nav-bg" class="wp-color-picker" data-coloris></div>
+          <div class="wp-form-group"><span class="wp-form-label">Nav Text</span><input type="text" id="theme-nav-text" class="wp-color-picker" data-coloris></div>
+          <div class="wp-form-group"><span class="wp-form-label">Nav Active State</span><input type="text" id="theme-nav-active" class="wp-color-picker" data-coloris></div>
+        </div>
+      </div>
+
+      <div style="background: rgba(0,0,0,0.15); padding: 16px; border-radius: 6px; border: 1px solid var(--border);">
+        <div class="wp-section-lbl" style="margin-top:0;">Resources Monitor</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div class="wp-form-group"><span class="wp-form-label">Tile Background</span><input type="text" id="theme-res-bg" class="wp-color-picker" data-coloris></div>
+          <div class="wp-form-group"><span class="wp-form-label">Label Text</span><input type="text" id="theme-res-text" class="wp-color-picker" data-coloris></div>
+          <div class="wp-form-group"><span class="wp-form-label">Value Text</span><input type="text" id="theme-res-val" class="wp-color-picker" data-coloris></div>
+          <div class="wp-form-group"><span class="wp-form-label">Progress Bar</span><input type="text" id="theme-res-bar" class="wp-color-picker" data-coloris></div>
+        </div>
+      </div>
+    </div> <div style="display: flex; gap: 8px; max-width: 400px; margin-top: 16px;">
+       <button class="wp-btn wp-btn-primary" style="flex: 2;" onclick="saveTheme()">Save Global Theme</button>
+       <button class="wp-btn wp-btn-ghost" style="flex: 1;" onclick="resetTheme()">Reset to Default</button>
+    </div>
+    <div id="theme-msg" style="margin-top: 10px;"></div>
+
   </div>
 </div>
 
@@ -2564,6 +2775,94 @@ if (!_globalPoll) {
   _globalPoll = setInterval(pollBadges, 5000); // Check every 5 seconds
 }
 startRealtimeStream(); // Start the real-time connection instantly!
+
+// ---- THEME ENGINE ----
+
+// 1. Initialize the Professional Color Picker
+Coloris({
+  themeMode: 'dark',
+  alpha: true,
+  format: 'mixed',
+  onChange: (color, input) => {
+    // This gives you LIVE PREVIEW as you drag the mouse around the color wheel!
+    const mapItem = THEME_MAP.find(i => i.id === input.id);
+    if (mapItem) document.documentElement.style.setProperty(mapItem.var, color);
+  }
+});
+
+const THEME_MAP = [
+  { id: 'theme-accent', var: '--accent', def: '#00c8ff' },
+  { id: 'theme-btn-primary', var: '--btn-primary', def: '#00c8ff' },
+  { id: 'theme-bg', var: '--bg-main', def: '#172643' },
+  { id: 'theme-surface', var: '--bg-surface', def: 'rgba(40, 61, 102, 1)' },
+  { id: 'theme-border', var: '--border', def: '#1e2a3a' },
+  { id: 'theme-title-bot', var: '--title-bot', def: '#00c8ff' },
+  { id: 'theme-text', var: '--text-main', def: '#cdd6f4' },
+  { id: 'theme-header', var: '--text-header', def: '#c2e9ff' },
+  { id: 'theme-muted', var: '--text-muted', def: '#6c7a96' },
+  { id: 'theme-nav-bg', var: '--nav-bg', def: '#172643' },
+  { id: 'theme-nav-text', var: '--nav-text', def: '#6c7a96' },
+  { id: 'theme-nav-active', var: '--nav-active', def: '#00c8ff' },
+  { id: 'theme-log-bg', var: '--log-bg', def: 'rgba(5, 8, 16, 0.5)' },
+  { id: 'theme-log-text', var: '--log-text', def: '#b6e8ff' },
+  { id: 'theme-log-info', var: '--log-info', def: '#00e676' },
+  { id: 'theme-log-warn', var: '--log-warn', def: '#ffea00' },
+  { id: 'theme-log-error', var: '--log-error', def: '#ff5a7a' },
+  { id: 'theme-res-bg', var: '--res-bg', def: 'rgba(0, 0, 0, 0.25)' },
+  { id: 'theme-res-text', var: '--res-text', def: '#6c7a96' },
+  { id: 'theme-res-val', var: '--res-val', def: '#cdd6f4' },
+  { id: 'theme-res-bar', var: '--res-bar', def: '#00c8ff' }
+];
+
+function applyThemeColors(colors) {
+  THEME_MAP.forEach(item => {
+    let val = colors[item.var] !== undefined ? colors[item.var] : item.def;
+    document.documentElement.style.setProperty(item.var, val);
+    
+    const input = document.getElementById(item.id);
+    if (input) {
+      input.value = val;
+      // Tell Coloris to update its internal swatches
+      input.dispatchEvent(new Event('input', { bubbles: true })); 
+    }
+  });
+}
+
+async function bootTheme() {
+  try {
+    const config = await api('GET', '/theme');
+    if (config && config.customColors) applyThemeColors(config.customColors);
+  } catch (e) { console.error("Theme boot failed", e); }
+}
+
+async function saveTheme() {
+  const colors = {};
+  THEME_MAP.forEach(item => {
+    const el = document.getElementById(item.id);
+    if (el) colors[item.var] = el.value;
+  });
+  
+  const r = await api('POST', '/theme', { theme: 'custom', customColors: colors });
+  if (r.ok) {
+    applyThemeColors(colors);
+    document.getElementById('theme-msg').innerHTML = '<div class="wp-banner-ok">&#10003; Global Theme saved permanently!</div>';
+    setTimeout(() => document.getElementById('theme-msg').innerHTML = '', 3000);
+  }
+}
+
+async function resetTheme() {
+  const defaults = {};
+  THEME_MAP.forEach(item => defaults[item.var] = item.def);
+  
+  const r = await api('POST', '/theme', { theme: 'default', customColors: defaults });
+  if (r.ok) {
+    applyThemeColors(defaults);
+    document.getElementById('theme-msg').innerHTML = '<div class="wp-banner-ok">&#10003; Theme reset to default!</div>';
+    setTimeout(() => document.getElementById('theme-msg').innerHTML = '', 3000);
+  }
+}
+
+bootTheme();
 
 </script>
 
