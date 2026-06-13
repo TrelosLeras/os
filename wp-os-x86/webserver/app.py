@@ -181,7 +181,7 @@ def list_slots():
         slot_id = d.name
         tok = read_token(slot_id)
 		
-		# --- NEW: Read the saved startup mode from disk ---
+        # --- NEW: Read the saved startup mode from disk ---
         # If it's a JS bot, the default fallback is now --type=wos
         startup_mode = "--type=wos" if meta.get("type") == "wos-js" else "--autoupdate"
         flags_f = d / ".startup_flags"
@@ -375,6 +375,12 @@ def _save_startup_mode(slot_id, mode):
             
         except Exception as e:
             logging.warning(f"Failed to write startup flags: {e}")
+
+@app.route("/api/slots/<slot_id>/flags", methods=["POST"])
+def api_slot_flags_set(slot_id):
+    data = request.json or {}
+    _save_startup_mode(slot_id, data.get("flags", ""))
+    return jsonify({"ok": True})
 
 @app.route("/api/slots/<slot_id>/start", methods=["POST"])
 def api_slot_start(slot_id):
@@ -1530,7 +1536,6 @@ body { background-color: var(--bg-main) !important; color: var(--text-main) !imp
 
 <div class="wp-main">
 
-<!-- BOTS -->
 <div id="bots" class="wp-page active">
   <div id="bots-banners"></div>
   <div id="bots-list"></div>
@@ -1584,7 +1589,6 @@ body { background-color: var(--bg-main) !important; color: var(--text-main) !imp
   </div>
 </div>
 
-<!-- TOKENS -->
 <div id="tokens" class="wp-page">
   <div id="tokens-msg"></div>
   <div class="wp-card">
@@ -1615,7 +1619,6 @@ body { background-color: var(--bg-main) !important; color: var(--text-main) !imp
   </div>
 </div>
 
-<!-- SYSTEM -->
 <div id="system" class="wp-page">
   <div class="wp-sys-grid" id="sys-info"></div>
 
@@ -1652,7 +1655,6 @@ body { background-color: var(--bg-main) !important; color: var(--text-main) !imp
   </div>
 </div>
 
-<!-- THEME -->
 <div id="theme" class="wp-page">
   <div class="wp-card">
     <div class="wp-card-title"><span class="wp-ic">🎨</span> Interface Customization</div>
@@ -1718,9 +1720,7 @@ body { background-color: var(--bg-main) !important; color: var(--text-main) !imp
   </div>
 </div>
 
-</div><!-- /wp-main -->
-
-<script>
+</div><script>
 let _slots=[], _allSlots=[], _selBotType='wos-py';
 
 // --- CUSTOM PORTAL DROPDOWN ENGINE ---
@@ -2007,22 +2007,11 @@ function startRealtimeStream() {
         pill.textContent = s.service_status;
       }
 
-      // 2. Instantly reset the Dropdown after --repair finishes
-      const modeInput = document.getElementById(`mode-${s.slot_id}`);
-      const modeBox = document.getElementById(`box-menu-mode-${s.slot_id}`);
-      
-      if (modeInput && modeBox && modeInput.value === '--repair' && s.startup_mode !== '--repair') {
-        const modeMap = {
-          '--autoupdate': 'Standard (Auto-Update)',
-          '--no-update': 'Skip Update (--no-update)',
-          '--repair': 'Repair (--repair)',
-          '--type=wos': 'WOS Mode (Default)',
-          '--type=ks': "KS Mode (--type=ks)",
-          '--type=both': 'Both Modes (--type=both)'
-        };
+      // 2. Safely update the text input if the backend changes
+      const flagInput = document.getElementById(`flags-${s.slot_id}`);
+      if (flagInput && document.activeElement !== flagInput) {
         const newMode = s.startup_mode || (s.type === 'wos-js' ? '--type=wos' : '--autoupdate');
-        modeInput.value = newMode;
-        modeBox.textContent = modeMap[newMode] || 'Standard (Auto-Update)';
+        if (flagInput.value !== newMode) flagInput.value = newMode;
       }
     });
   };
@@ -2065,25 +2054,19 @@ function slotCard(s){
   ${(s.type === 'wos-py' || s.type === 'kingshot' || s.type === 'wos-js') ? `
   <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; background: rgba(0,0,0,.2); border: 1px solid #1e2a3a; padding: 8px 14px; border-radius: 6px;">
     <span style="font-size: 11px; letter-spacing: 1px; color: #6c7a96; text-transform: uppercase;">
-      <span style="color:#00c8ff; margin-right: 4px;">⚙</span> ${s.type === 'wos-js' ? 'Bot Core Execution Type' : 'Startup Mode'}
+      <span style="color:#00c8ff; margin-right: 4px;">⚙</span> Startup Flags
     </span>
     
-    <div class="wp-sel-wrap" style="min-width: 250px; max-width: 320px;">
-      <div class="wp-sel-box" id="box-menu-mode-${s.slot_id}" onclick="toggleCustomSel('menu-mode-${s.slot_id}', this.id)" style="padding: 4px 28px 4px 10px; background-position: right 8px center; background-color: rgba(0,0,0,.4);">${currentModeLabel}</div>
-      <div class="wp-sel-menu" id="menu-mode-${s.slot_id}">
-        ${s.type === 'wos-js' ? `
-          <div class="wp-sel-item" onclick="pickCustomSel('menu-mode-${s.slot_id}', 'mode-${s.slot_id}', '--type=wos', 'WOS Mode (Default)')">WOS Mode (Default)</div>
-          <div class="wp-sel-item" onclick="pickCustomSel('menu-mode-${s.slot_id}', 'mode-${s.slot_id}', '--type=ks', 'King\'s State Mode (--type=ks)')">KS Mode (--type=ks)</div>
-          <div class="wp-sel-item" onclick="pickCustomSel('menu-mode-${s.slot_id}', 'mode-${s.slot_id}', '--type=both', 'Both Modes (--type=both)')">Both Modes (--type=both)</div>
-        ` : `
-          <div class="wp-sel-item" onclick="pickCustomSel('menu-mode-${s.slot_id}', 'mode-${s.slot_id}', '--autoupdate', 'Standard (Auto-Update)')">Standard (Auto-Update)</div>
-          <div class="wp-sel-item" onclick="pickCustomSel('menu-mode-${s.slot_id}', 'mode-${s.slot_id}', '--no-update', 'Skip Update (--no-update)')">Skip Update (--no-update)</div>
-          <div class="wp-sel-item" onclick="pickCustomSel('menu-mode-${s.slot_id}', 'mode-${s.slot_id}', '--repair', 'Repair Files (--repair)')">Repair Files (run once) (--repair)</div>
-        `}
-      </div>
-      <input type="hidden" id="mode-${s.slot_id}" value="${currentMode}">
-    </div>
-    </div>
+    <input type="text" class="wp-inp" id="flags-${s.slot_id}" 
+      data-default="${s.type === 'wos-js' ? '--type=wos' : '--autoupdate'}"
+      value="${esc(s.startup_mode || '')}" 
+      style="flex: 1; min-width: 200px; font-family: 'Share Tech Mono', monospace; font-size: 13px;" 
+      placeholder="e.g. --type=wos --autoupdate" 
+      onblur="saveFlags('${s.slot_id}', this.value)" 
+      onkeydown="if(event.key==='Enter') this.blur();">
+      
+    <span id="flags-msg-${s.slot_id}" style="font-size: 11px; color: #00e676; opacity: 0; transition: opacity 0.3s; width: 50px;">&#10003; Saved</span>
+  </div>
   ` : ''}
 
   <div class="wp-btn-row">
@@ -2143,12 +2126,19 @@ async function saveVcConfig(sid){
 }
 
 async function slotAct(sid, action) {
-  let payload = {}; // Initialize an empty object
+  let payload = {}; 
   
   if (action === 'start' || action === 'restart') {
-    const modeSel = document.getElementById(`mode-${sid}`);
-    if (modeSel) {
-      payload.mode = modeSel.value;
+    const flagInp = document.getElementById(`flags-${sid}`);
+    if (flagInp) {
+      payload.mode = flagInp.value;
+      
+      // ONE-TIME FLAG RESET: Prevent accidental double-repairs on next boot
+      if (flagInp.value.includes('--repair')) {
+        const defMode = flagInp.getAttribute('data-default');
+        flagInp.value = defMode;
+        saveFlags(sid, defMode); // Silently saves the default back into the database!
+      }
     }
   }
   
@@ -2156,6 +2146,17 @@ async function slotAct(sid, action) {
   // instead of an empty body, which prevents Flask from crashing!
   await api('POST', `/slots/${sid}/${action}`, payload);
   loadBots();
+}
+
+async function saveFlags(sid, val) {
+  const r = await api('POST', `/slots/${sid}/flags`, { flags: val });
+  if (r.ok) {
+    const msg = document.getElementById(`flags-msg-${sid}`);
+    if (msg) {
+      msg.style.opacity = '1';
+      setTimeout(() => { if (msg) msg.style.opacity = '0'; }, 2000);
+    }
+  }
 }
 
 async function installSlot(sid,type){
@@ -2249,7 +2250,6 @@ async function loadTokens(){
     <td style="color:#6c7a96;font-size:11px">${esc(v.added.slice(0,10))}</td>
     <td><div class="wp-btn-row" style="gap:6px">
       
-      <!-- NEW CUSTOM DROPDOWN -->
       <div class="wp-sel-wrap">
         <div class="wp-sel-box" id="box-menu-${v.token_hash}" onclick="toggleCustomSel('menu-${v.token_hash}', this.id)">Select slot...</div>
         <div class="wp-sel-menu" id="menu-${v.token_hash}">
@@ -2258,8 +2258,6 @@ async function loadTokens(){
         </div>
         <input type="hidden" id="asgn-${v.token_hash}" value="">
       </div>
-      <!-- END CUSTOM DROPDOWN -->
-
       <button class="wp-btn wp-btn-primary" style="font-size:10px;padding:4px 10px" onclick="assignVault('${v.token_hash}')">Assign</button>
       <button class="wp-btn wp-btn-danger" style="font-size:10px;padding:4px 10px" onclick="removeVault('${v.token_hash}')">Remove</button>
     </div></td>
@@ -2866,7 +2864,6 @@ bootTheme();
 
 </script>
 
-<!-- Backup Modal -->
 <div id="backup-modal" class="wp-modal-overlay">
   <div class="wp-modal">
     <div class="wp-card" style="min-width: 300px;">
@@ -2895,7 +2892,6 @@ bootTheme();
     </div>
   </div>
 </div>
-<!-- Audio Modal -->
 <div id="audio-modal" class="wp-modal-overlay">
   <div class="wp-modal">
     <div class="wp-card" style="min-width: 300px;">
@@ -2925,7 +2921,6 @@ bootTheme();
   </div>
 </div>
 
-<!-- Move / Return Modal -->
 <div id="move-modal" class="wp-modal-overlay">
   <div class="wp-modal">
     <div class="wp-card" style="min-width: 300px;">
@@ -2958,7 +2953,6 @@ bootTheme();
   </div>
 </div>
 
-<!-- Delete Modal -->
 <div id="delete-modal" class="wp-modal-overlay">
   <div class="wp-modal">
     <div class="wp-card" style="min-width: 300px;">
@@ -2983,7 +2977,6 @@ bootTheme();
   </div>
 </div>
 
-<!-- Custom Input Modal -->
 <div id="custom-prompt-modal" class="wp-modal-overlay">
   <div class="wp-modal">
     <div class="wp-card" style="min-width: 320px;">
@@ -2998,7 +2991,6 @@ bootTheme();
   </div>
 </div>
 
-<!-- Custom Confirm/Alert Modal -->
 <div id="custom-confirm-modal" class="wp-modal-overlay">
   <div class="wp-modal">
     <div class="wp-card" style="min-width: 320px;">
