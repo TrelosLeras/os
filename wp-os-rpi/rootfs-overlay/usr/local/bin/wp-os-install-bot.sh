@@ -83,6 +83,59 @@ install_voicechat() {
   sudo -u "$OS_USERNAME" npm install 2>&1 || error "npm install failed for voicechat"
   [ -d "${APP_DIR}/node_modules" ] || error "npm install completed but node_modules is missing for voicechat"
   [ -d "${APP_DIR}/node_modules/discord.js" ] || error "discord.js missing after npm install -- check package.json"
+  
+  # --- PIPER TTS LIBRARY INSTALLATION ---
+  info "Downloading Piper TTS library for VoiceChat..."
+  
+  # 1. Detect server architecture (x86_64 VPS vs aarch64 Raspberry Pi)
+  ARCH=$(uname -m)
+  if [ "$ARCH" = "x86_64" ]; then
+      PIPER_URL="https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz"
+  elif [ "$ARCH" = "aarch64" ]; then
+      PIPER_URL="https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_aarch64.tar.gz"
+  else
+      warn "Unsupported architecture for pre-compiled Piper: $ARCH"
+      PIPER_URL=""
+  fi
+
+  # 2. Download and extract directly into the bot's app folder
+  if [ -n "$PIPER_URL" ]; then
+      PIPER_TMP=$(mktemp)
+      
+      # Added safety net: If the download fails, explicitly print why!
+      wget -q -O "$PIPER_TMP" "$PIPER_URL" || error "Failed to download Piper TTS from GitHub."
+      
+      # Create a dedicated piper folder inside the bot's directory
+      mkdir -p "${APP_DIR}/piper"
+      
+      # Extract and strip the top-level folder so the binary sits directly in /app/piper/
+      tar -xzf "$PIPER_TMP" -C "${APP_DIR}/piper" --strip-components=1
+      rm -f "$PIPER_TMP"
+      
+      # Lock down permissions so the bot can execute it
+      chmod +x "${APP_DIR}/piper/piper"
+      
+      # --- NEW: Create a global shortcut so Node.js can spawn it natively ---
+      ln -sf "${APP_DIR}/piper/piper" /usr/local/bin/piper
+      # ----------------------------------------------------------------------
+      
+      # --- NEW: PIPER VOICE MODEL DOWNLOAD ---
+      info "Downloading default English voice model (Lessac Medium)..."
+      mkdir -p /usr/local/bin/voices
+      
+      # Use curl -fsSL to safely handle Hugging Face CDN redirects
+      curl -fsSL -o /usr/local/bin/voices/en_US-lessac-medium.onnx "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx" || warn "Failed to download voice .onnx"
+      
+      curl -fsSL -o /usr/local/bin/voices/en_US-lessac-medium.onnx.json "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json" || warn "Failed to download voice .json"
+      
+      chmod 755 /usr/local/bin/voices
+      chmod 644 /usr/local/bin/voices/*
+      # ---------------------------------------
+
+      info "Piper TTS successfully installed!"
+  fi
+  # --------------------------------------
+
   chown -R "${OS_USERNAME}:${OS_USERNAME}" "$APP_DIR"
 }
 
