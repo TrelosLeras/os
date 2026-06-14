@@ -77,7 +77,8 @@ apt-get install -y -qq --no-install-recommends \
   wget curl git ca-certificates gnupg \
   build-essential python3-dev \
   openssh-server python3-flask \
-  feh jq net-tools unzip
+  feh jq net-tools unzip\
+  feh jq net-tools unzip espeak-ng
 
 # -- 5. Node.js 22
 echo "[5/9] Installing Node.js 22..."
