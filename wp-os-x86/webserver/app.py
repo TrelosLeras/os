@@ -167,6 +167,17 @@ def write_token(slot_id: str, token: str):
     uid, gid = _os_user_ids()
     os.chown(p, uid, gid)
 
+def safe_extract(zip_ref, target_dir):
+    """Protects against Zip Slip vulnerabilities by mathematically verifying paths."""
+    target_path = os.path.abspath(target_dir)
+    for zip_info in zip_ref.infolist():
+        # Calculate where the file wants to go
+        extract_path = os.path.abspath(os.path.join(target_path, zip_info.filename))
+        # If it tries to escape the target directory, skip it!
+        if not extract_path.startswith(target_path + os.sep):
+            continue
+        zip_ref.extract(zip_info, target_dir)
+
 def list_slots():
     slots = []
     if not BOTS_DIR.exists():
@@ -359,46 +370,102 @@ def api_slots_remove(slot_id):
     shutil.rmtree(slot_dir, ignore_errors=True)
     return jsonify({"ok": True})
 
-# Helper function to prevent repeating ourselves
-def _save_startup_mode(slot_id, mode):
-    slot_dir = BOTS_DIR / slot_id
-    if slot_dir.exists():
-        flags_file = slot_dir / ".startup_flags"
-        try:
-            with open(flags_file, "w") as f:
-                f.write(mode)
-            os.chmod(flags_file, 0o644)
-            
-            # --- NEW: Hand ownership to the bot user so it can reset itself ---
-            uid, gid = _os_user_ids()
-            os.chown(flags_file, uid, gid)
-            
-        except Exception as e:
-            logging.warning(f"Failed to write startup flags: {e}")
-
 @app.route("/api/slots/<slot_id>/flags", methods=["POST"])
 def api_slot_flags_set(slot_id):
     data = request.json or {}
     _save_startup_mode(slot_id, data.get("flags", ""))
     return jsonify({"ok": True})
 
+# Helper function to prevent repeating ourselves
+def _save_startup_mode(slot_id, mode):
+    # --- SMART FALLBACK: Never allow the file to be saved completely empty ---
+    clean_mode = mode.strip()
+    if not clean_mode:
+        meta = _read_json(BOTS_DIR / slot_id / ".meta.json", {})
+        clean_mode = "--type=wos" if meta.get("type") == "wos-js" else "--autoupdate"
+        
+    slot_dir = BOTS_DIR / slot_id
+    if slot_dir.exists():
+        flags_file = slot_dir / ".startup_flags"
+        try:
+            with open(flags_file, "w") as f:
+                f.write(clean_mode)
+            os.chmod(flags_file, 0o644)
+            
+            # Hand ownership to the bot user so it can read/reset itself
+            uid, gid = _os_user_ids()
+            os.chown(flags_file, uid, gid)
+            
+        except Exception as e:
+            logging.warning(f"Failed to write startup flags: {e}")
+
+def _clean_repair_flag(slot_id, current_mode):
+    if "--repair" not in current_mode:
+        return
+        
+    # 1. Grab the bot type to know what the default is
+    meta = _read_json(BOTS_DIR / slot_id / ".meta.json", {})
+    bot_type = meta.get("type")
+    default_flag = "--type=wos" if bot_type == "wos-js" else "--autoupdate"
+
+    # 2. Surgically cut out --repair
+    clean_mode = current_mode.replace("--repair", "")
+
+    # 3. Inject the default flag (Smart check to prevent duplicates)
+    if bot_type == "wos-js" and "--type=" in clean_mode:
+        # If it's a JS bot and they already have --type=ks or --type=both, leave it alone!
+        pass
+    elif default_flag not in clean_mode:
+        # Prepend the default flag so "--repair --no-dm" becomes "--autoupdate --no-dm"
+        clean_mode = f"{default_flag} {clean_mode}"
+
+    # 4. Clean up any awkward extra spaces
+    clean_mode = re.sub(r'\s+', ' ', clean_mode).strip()
+
+    _save_startup_mode(slot_id, clean_mode)
+
+# --- The Delayed Background Task ---
+def _schedule_repair_cleanup(slot_id, current_mode):
+    if "--repair" not in current_mode:
+        return
+    def task():
+        time.sleep(5)  # 5-second grace period for the bot to boot and read the file!
+        _clean_repair_flag(slot_id, current_mode)
+    threading.Thread(target=task, daemon=True).start()
+
 @app.route("/api/slots/<slot_id>/start", methods=["POST"])
 def api_slot_start(slot_id):
+    if not re.match(r'^[a-zA-Z0-9_-]+$', slot_id):
+        return jsonify({"error": "Invalid slot ID"}), 400
     data = request.json or {}
-    _save_startup_mode(slot_id, data.get("mode", "--autoupdate"))
+    mode = data.get("mode", "--autoupdate")
+    _save_startup_mode(slot_id, mode)
     svc_run("start", slot_id)
+    
+    # Trigger the delayed background cleanup
+    _schedule_repair_cleanup(slot_id, mode)
+    
     return jsonify({"ok": True, "status": svc_status(slot_id)})
 
 @app.route("/api/slots/<slot_id>/stop", methods=["POST"])
 def api_slot_stop(slot_id):
+    if not re.match(r'^[a-zA-Z0-9_-]+$', slot_id):
+        return jsonify({"error": "Invalid slot ID"}), 400
     svc_run("stop", slot_id)
     return jsonify({"ok": True, "status": svc_status(slot_id)})
 
 @app.route("/api/slots/<slot_id>/restart", methods=["POST"])
 def api_slot_restart(slot_id):
+    if not re.match(r'^[a-zA-Z0-9_-]+$', slot_id):
+        return jsonify({"error": "Invalid slot ID"}), 400
     data = request.json or {}
-    _save_startup_mode(slot_id, data.get("mode", "--autoupdate"))
+    mode = data.get("mode", "--autoupdate")
+    _save_startup_mode(slot_id, mode)
     svc_run("restart", slot_id)
+    
+    # Trigger the delayed background cleanup
+    _schedule_repair_cleanup(slot_id, mode)
+    
     return jsonify({"ok": True, "status": svc_status(slot_id)})
 
 @app.route("/api/slots/<slot_id>/install", methods=["POST"])
@@ -447,13 +514,30 @@ def api_slot_logs(slot_id):
         n = min(int(request.args.get("n", 100)), 500)
     except (ValueError, TypeError):
         n = 100
+
+    # --- SMART FILTER: Ignore ghost logs from deleted bots ---
+    slot_dir = BOTS_DIR / slot_id
+    meta = _read_json(slot_dir / ".meta.json", {})
+    created_str = meta.get("created", "")
+    
+    cmd = ["journalctl", "-u", f"wp-os-bot@{slot_id}", "-n", str(n), "--no-pager", "--output=short-iso"]
+    
+    if created_str:
+        # Converts "2026-06-13T20:34:06Z" to "2026-06-13 20:34:06 UTC" so Journalctl understands it
+        clean_time = created_str.replace("T", " ").replace("Z", " UTC")
+        cmd.extend(["--since", clean_time])
+
     try:
         r = subprocess.run(
-            ["journalctl", "-u", f"wp-os-bot@{slot_id}",
-             "-n", str(n), "--no-pager", "--output=short-iso"],
+            cmd,
             capture_output=True, text=True, timeout=10, check=False
         )
         lines = r.stdout.splitlines()
+        
+        # If the bot is brand new and hasn't booted yet, show a clean message
+        if not lines:
+            lines = [f"[WP-OS] Slot '{slot_id}' is ready. Waiting for first boot..."]
+            
         return jsonify({"lines": lines})
     except Exception as e:
         return jsonify({"error": str(e), "lines": []})
@@ -515,20 +599,40 @@ def api_install_log(slot_id):
     except FileNotFoundError:
         return jsonify({"lines": []})
 
+# --- GLOBAL CACHE FOR REAL-TIME STREAM ---
+_stream_cache = []
+_stream_lock = threading.Lock()
+
+def _background_slot_poller():
+    """Runs ONCE in the background, updating the cache every 1.5 seconds."""
+    global _stream_cache
+    while True:
+        try:
+            current_state = list_slots()
+            with _stream_lock:
+                _stream_cache = current_state
+        except Exception:
+            pass
+        time.sleep(1.5)
+
+# Start the invisible background task
+threading.Thread(target=_background_slot_poller, daemon=True).start()
+
 @app.route("/api/stream", methods=["GET"])
 def api_stream():
     def event_stream():
         last_state = None
         while True:
-            # Check the current state of all bots
-            current_state = list_slots()
-            
-            # If the state changed since the last check, push it to the browser!
+            # Safely grab the newest data from the global background thread
+            with _stream_lock:
+                current_state = list(_stream_cache)
+                
+            # If the state changed, push it to this specific browser
             if current_state != last_state:
                 yield f"data: {json.dumps(current_state)}\n\n"
                 last_state = current_state
                 
-            # Wait 1 second before checking again
+            # Sleep 1 second before checking the cache again (Very cheap CPU cost!)
             time.sleep(1)
             
     return Response(event_stream(), mimetype="text/event-stream")
@@ -613,7 +717,7 @@ def api_slot_backup_upload(slot_id):
     try:
         # 2. Extract over existing files (leaves source code untouched!)
         with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
-            zip_ref.extractall(slot_dir)
+            safe_extract(zip_ref,slot_dir)
             
         # 3. Correct permissions
         uid, gid = _os_user_ids()
@@ -689,7 +793,7 @@ def api_slot_audio_upload(slot_id):
         audio_path.mkdir(parents=True, exist_ok=True)
         
         with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
-            zip_ref.extractall(audio_path)
+            safe_extract(zip_ref,audio_path)
             
         uid, gid = _os_user_ids()
         for root, dirs, files in os.walk(audio_path):
@@ -1275,6 +1379,7 @@ SINGLE_PAGE_HTML = r"""<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>WhiteoutProjectOS</title>
+<link rel="icon" type="image/png" href="https://raw.githubusercontent.com/ikketim/os/main/etc/wp-os-logo.png">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Exo+2:wght@300;400;600;700&display=swap');
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1555,7 +1660,7 @@ body { background-color: var(--bg-main) !important; color: var(--text-main) !imp
       <div class="wp-bot-opt" onclick="pickBotType('wos-js',this)">
         <div class="wp-bot-radio"></div>
         <div>
-          <div class="wp-bot-opt-name">Whiteout Survival <span class="wp-type-tag wp-tag-js">NODE 22</span></div>
+          <div class="wp-bot-opt-name">Whiteout Survival/Kingshot <span class="wp-type-tag wp-tag-js">NODE 22</span></div>
           <div class="wp-bot-opt-desc">JavaScript/TypeScript edition</div>
         </div>
       </div>
@@ -2052,20 +2157,27 @@ function slotCard(s){
   </div>`:''}
   
   ${(s.type === 'wos-py' || s.type === 'kingshot' || s.type === 'wos-js') ? `
-  <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; background: rgba(0,0,0,.2); border: 1px solid #1e2a3a; padding: 8px 14px; border-radius: 6px;">
-    <span style="font-size: 11px; letter-spacing: 1px; color: #6c7a96; text-transform: uppercase;">
+  <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; background: rgba(0,0,0,.2); border: 1px solid #1e2a3a; padding: 8px 14px; border-radius: 6px;">
+    
+    <span style="font-size: 11px; letter-spacing: 1px; color: #6c7a96; text-transform: uppercase; white-space: nowrap;">
       <span style="color:#00c8ff; margin-right: 4px;">⚙</span> Startup Flags
     </span>
     
-    <input type="text" class="wp-inp" id="flags-${s.slot_id}" 
-      data-default="${s.type === 'wos-js' ? '--type=wos' : '--autoupdate'}"
-      value="${esc(s.startup_mode || '')}" 
-      style="flex: 1; min-width: 200px; font-family: 'Share Tech Mono', monospace; font-size: 13px;" 
-      placeholder="e.g. --type=wos --autoupdate" 
-      onblur="saveFlags('${s.slot_id}', this.value)" 
-      onkeydown="if(event.key==='Enter') this.blur();">
+    <div style="position: relative; flex: 1; min-width: 180px; display: flex; align-items: center;">
       
-    <span id="flags-msg-${s.slot_id}" style="font-size: 11px; color: #00e676; opacity: 0; transition: opacity 0.3s; width: 50px;">&#10003; Saved</span>
+      <input type="text" class="wp-inp" id="flags-${s.slot_id}" 
+        data-default="${s.type === 'wos-js' ? '--type=wos' : '--autoupdate'}"
+        value="${esc(s.startup_mode || '')}" 
+        style="width: 100%; font-family: 'Share Tech Mono', monospace; font-size: 13px; padding-right: 55px;" 
+        placeholder="e.g. --autoupdate" 
+        onblur="saveFlags('${s.slot_id}', this.value)" 
+        onkeydown="if(event.key==='Enter') this.blur();">
+        
+      <span id="flags-msg-${s.slot_id}" style="position: absolute; right: 10px; font-size: 11px; color: #00e676; opacity: 0; transition: opacity 0.3s; pointer-events: none;">&#10003; Saved</span>
+    </div>
+
+    <button class="wp-btn wp-btn-ghost" style="padding: 5px 12px; font-size: 14px; border-color: #3c4e6a; color: #aee5ff;" onclick="openFlagsInfo('${s.type}')" title="View available flags">ℹ</button>
+
   </div>
   ` : ''}
 
@@ -2132,13 +2244,6 @@ async function slotAct(sid, action) {
     const flagInp = document.getElementById(`flags-${sid}`);
     if (flagInp) {
       payload.mode = flagInp.value;
-      
-      // ONE-TIME FLAG RESET: Prevent accidental double-repairs on next boot
-      if (flagInp.value.includes('--repair')) {
-        const defMode = flagInp.getAttribute('data-default');
-        flagInp.value = defMode;
-        saveFlags(sid, defMode); // Silently saves the default back into the database!
-      }
     }
   }
   
@@ -2550,6 +2655,7 @@ window.addEventListener('DOMContentLoaded', () => {
         closeDeleteModal();
         closeBackupModal();
         closeAudioModal();
+        closeFlagsInfo();
       }
     });
   });
@@ -2561,6 +2667,7 @@ document.addEventListener('keydown', (e) => {
     closeDeleteModal();
     closeBackupModal();
     closeAudioModal();
+    closeFlagsInfo();
   }
 });
 
@@ -2736,6 +2843,44 @@ async function refreshLog(sid){
   
   const cnt=document.getElementById(`bot-log-count-${sid}`);
   if(cnt) cnt.textContent=`${lines.length} lines`;
+}
+
+function openFlagsInfo(botType) {
+  let content = '';
+
+  // Generic Python Flags (wos-py, kingshot)
+  const pyFlags = `
+    <table class="wp-table" style="margin-bottom:0">
+      <thead><tr><th>Flag</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td style="color:#00c8ff; font-family:'Share Tech Mono',monospace;">--autoupdate</td><td style="color:#cdd6f4;">Standard boot with automatic updates (Default)</td></tr>
+        <tr><td style="color:#00c8ff; font-family:'Share Tech Mono',monospace;">--no-update</td><td style="color:#cdd6f4;">Boots the bot but skips the update check</td></tr>
+        <tr><td style="color:#00c8ff; font-family:'Share Tech Mono',monospace;">--beta</td><td style="color:#cdd6f4;">Boots the bot in beta mode (use at your own risk)</td></tr>
+        <tr><td style="color:#00c8ff; font-family:'Share Tech Mono',monospace;">--repair</td><td style="color:#cdd6f4;">Forces a database repair cycle (Reverts to default after)</td></tr>
+        <tr><td style="color:#00c8ff; font-family:'Share Tech Mono',monospace;">--no-dm</td><td style="color:#cdd6f4;">Starts the bot with Direct Messages disabled (can be used along with the above)</td></tr>
+      </tbody>
+    </table>
+  `;
+
+  // Node.js Flags (wos-js)
+  const jsFlags = `
+    <table class="wp-table" style="margin-bottom:0">
+      <thead><tr><th>Flag</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td style="color:#ffea00; font-family:'Share Tech Mono',monospace;">--type=wos</td><td style="color:#cdd6f4;">Standard WOS mode (Default)</td></tr>
+        <tr><td style="color:#ffea00; font-family:'Share Tech Mono',monospace;">--type=ks</td><td style="color:#cdd6f4;">Kingshot mode</td></tr>
+        <tr><td style="color:#ffea00; font-family:'Share Tech Mono',monospace;">--type=both</td><td style="color:#cdd6f4;">Runs both WOS and Kingshot modes simultaneously</td></tr>
+        <tr><td style="color:#ffea00; font-family:'Share Tech Mono',monospace;">--ram=<MB></td><td style="color:#cdd6f4;">Cap bot and installer heap size (can be used along type)</td></tr>
+      </tbody>
+    </table>
+  `;
+
+  document.getElementById('flags-info-content').innerHTML = (botType === 'wos-js') ? jsFlags : pyFlags;
+  document.getElementById('flags-info-modal').classList.add('active');
+}
+
+function closeFlagsInfo() {
+  document.getElementById('flags-info-modal').classList.remove('active');
 }
 
 function toggleLog(sid,btn){
@@ -2999,6 +3144,18 @@ bootTheme();
       <div class="wp-btn-row">
         <button class="wp-btn wp-btn-primary" id="c-confirm-ok">Confirm</button>
         <button class="wp-btn wp-btn-ghost" id="c-confirm-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="flags-info-modal" class="wp-modal-overlay">
+  <div class="wp-modal">
+    <div class="wp-card" style="min-width: 340px; max-width: 500px;">
+      <div class="wp-card-title"><span class="wp-ic">ℹ</span> Available Startup Flags</div>
+      <div id="flags-info-content" style="margin-bottom: 20px;"></div>
+      <div class="wp-btn-row">
+        <button class="wp-btn wp-btn-ghost" onclick="closeFlagsInfo()">Close</button>
       </div>
     </div>
   </div>
