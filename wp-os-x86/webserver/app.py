@@ -1326,6 +1326,23 @@ def api_system_update_log():
         return jsonify({"lines": [], "running": running})
 
 # ---------------------------------------------------------------------------
+# Local Assets API
+# ---------------------------------------------------------------------------
+@app.route("/favicon.ico")
+def serve_favicon():
+    logo_path = os.path.join(WSERVER, "wp-os-logo.png")
+    if os.path.exists(logo_path):
+        return send_file(logo_path, mimetype="image/png")
+    return "Image not found on server", 404
+
+@app.route("/logo.png")
+def serve_logo():
+    logo_path = os.path.join(WSERVER, "wp-os-logo.png")
+    if os.path.exists(logo_path):
+        return send_file(logo_path, mimetype="image/png")
+    return "Image not found on server", 404
+
+# ---------------------------------------------------------------------------
 # Theme API
 # ---------------------------------------------------------------------------
 THEME_FILE = Path(WSERVER) / ".theme.json"
@@ -1379,7 +1396,7 @@ SINGLE_PAGE_HTML = r"""<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>WhiteoutProjectOS</title>
-<link rel="icon" type="image/png" href="https://raw.githubusercontent.com/ikketim/os/main/etc/wp-os-logo.png">
+<link rel="icon" type="image/png" href="/favicon.ico">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Exo+2:wght@300;400;600;700&display=swap');
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1623,7 +1640,7 @@ body { background-color: var(--bg-main) !important; color: var(--text-main) !imp
 
 <div class="wp-hdr">
   <div class="wp-logo">
-    <img src="https://raw.githubusercontent.com/ikketim/os/main/etc/wp-os-logo.png" class="wp-logo-icon" alt="Logo">
+    <img src="/logo.png" class="wp-logo-icon" alt="Logo">
     <div class="wp-logo-text">WhiteoutProject<span>OS</span></div>
   </div>
   <div class="wp-hdr-right">
