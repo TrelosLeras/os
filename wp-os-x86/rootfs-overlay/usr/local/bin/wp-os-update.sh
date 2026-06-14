@@ -90,6 +90,10 @@ update_file /usr/local/bin/wp-os-install-bot.sh \
 update_file "${WEBSERVER_DIR}/app.py" \
   "${WEBSERVER_URL}/app.py" 644
 
+# Update the OS Logo
+update_file "${WEBSERVER_DIR}/wp-os-logo.png" \
+  "https://raw.githubusercontent.com/${REPO}/${LATEST_TAG}/etc/wp-os-logo.png" 644
+
 # Update self last so any earlier failure doesn't break future runs
 update_file /usr/local/bin/wp-os-update.sh \
   "${SCRIPTS_URL}/wp-os-update.sh" 755
