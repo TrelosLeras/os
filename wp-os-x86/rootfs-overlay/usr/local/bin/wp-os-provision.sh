@@ -183,6 +183,12 @@ mkdir -p "$WEBSERVER_DIR"
 chown root:root "$WEBSERVER_DIR"
 chmod 755 "$WEBSERVER_DIR"
 
+# --- Download the Logo Locally ---
+echo "Fetching OS Logo locally..."
+curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPO}/main/etc/wp-os-logo.png" -o "${WEBSERVER_DIR}/wp-os-logo.png" || true
+chmod 644 "${WEBSERVER_DIR}/wp-os-logo.png"
+# --------------------------------------
+
 cat > /etc/systemd/system/wp-os-web.service <<EOF
 [Unit]
 Description=WhiteoutProjectOS Web Control Panel
